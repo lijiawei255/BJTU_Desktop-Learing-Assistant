@@ -15,7 +15,7 @@ numpy>=2.0.0
 opencv-python>=4.8.0
 
 # === 阿里云百炼 API（LLM + ASR + TTS 统一接入）===
-dashscope>=1.14.0
+dashscope>=1.24.6
 
 # === 数据与配置 ===
 pydantic>=2.5.0
