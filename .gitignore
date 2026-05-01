@@ -248,7 +248,3 @@ src/models/*.onnx
 
 # Claude Code 配置
 .claude/
-
-# 项目文档（非代码）
-项目文档/
-原始设计方案.md
