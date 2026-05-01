@@ -20,7 +20,7 @@ dependencies:
     - PyAudio==0.2.14
     - numpy>=2.4.0
     - opencv-python>=4.13.0
-    - dashscope==1.14.0
+    - dashscope>=1.24.6
     - pydantic>=2.13.0
     - python-dotenv>=1.2.0
     - requests>=2.33.0

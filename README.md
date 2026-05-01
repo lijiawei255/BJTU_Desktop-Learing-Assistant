@@ -20,8 +20,8 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone <repo-url>
-cd BJTU_Desktop-Learning-Assistant
+git clone https://github.com/lijiawei255/BJTU_Desktop-Learing-Assistant.git
+cd BJTU_Desktop-Learing-Assistant
 ```
 
 ### 2. 使用 Anaconda 创建环境（一键配置）
@@ -125,7 +125,7 @@ pip install -r requirements.txt
 
 ### Git 注意事项
 
-- `.env` 和 `sevret.env` **绝对不能提交**（已加入 .gitignore）
+- `.env` **绝对不能提交**（已加入 .gitignore）
 - API Key 等敏感信息仅存储在本地 `.env` 文件中
 - 变更依赖后请同步更新 `environment.yml` 和 `requirements.txt`
 
