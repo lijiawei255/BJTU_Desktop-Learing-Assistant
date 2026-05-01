@@ -1,0 +1,11 @@
+# requirements-dev.txt — 开发阶段额外依赖
+#
+# 安装：
+#   pip install -r requirements-dev.txt
+
+# === 测试框架 ===
+pytest>=9.0.0
+pytest-asyncio>=1.3.0
+
+# === 代码格式化 ===
+black>=26.0.0

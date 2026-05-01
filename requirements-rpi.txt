@@ -1,0 +1,17 @@
+# requirements-rpi.txt — 树莓派专用依赖（阶段二使用）
+#
+# 安装：
+#   pip install -r requirements-rpi.txt
+#
+# 这些包依赖树莓派的 GPIO/I2C 硬件接口，无法在 Windows PC 上安装。
+# 仅在阶段二（树莓派集成调试）时使用。
+
+# 树莓派 GPIO 控制
+gpiozero>=2.0.0
+pigpio>=1.78
+
+# I2C 总线通信（TOF 传感器等）
+smbus2>=0.4.0
+
+# 音频重采样（CosyVoice 24kHz → 16kHz）
+# librosa        # 可选，取消注释以启用高质量重采样

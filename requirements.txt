@@ -1,0 +1,29 @@
+# requirements.txt — Python 项目依赖（pip 安装）
+#
+# 一键安装（需要先激活 amiya 环境）：
+#   pip install -r requirements.txt
+#
+# 注意：PC 开发阶段无需安装树莓派专用包（gpiozero/pigpio/smbus2），
+#       这些仅在 requirements-rpi.txt 中声明。
+
+# === 语音处理 ===
+webrtcvad>=2.0.10
+PyAudio>=0.2.11
+
+# === 数值计算与图像处理 ===
+numpy>=2.0.0
+opencv-python>=4.8.0
+
+# === 阿里云百炼 API（LLM + ASR + TTS 统一接入）===
+dashscope>=1.14.0
+
+# === 数据与配置 ===
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+
+# === HTTP 请求 ===
+requests>=2.31.0
+
+# === setuptools 版本约束 ===
+# webrtcvad 依赖 pkg_resources，新版 setuptools (>=82.0) 已移除此模块
+setuptools>=65.0,<70.0
