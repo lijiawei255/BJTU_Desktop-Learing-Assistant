@@ -229,11 +229,11 @@ sevret.env
 data/memory_*.json
 data/longterm_memory.json
 data/config.json
-data/session_history/
+data/session_history/*
 !data/session_history/.gitkeep
 
 # 日志文件
-logs/
+logs/*
 !logs/.gitkeep
 
 # 音频文件（调试输出）
