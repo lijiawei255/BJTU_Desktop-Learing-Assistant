@@ -36,7 +36,7 @@ DEFAULT_CONFIG = {
     },
     "llm": {
         "provider": "alibaba_bailian",
-        "model": "qwen3.6-plus",
+        "model": "qwen-plus",
         "max_tokens": 512,
         "temperature": 0.7,
         "top_p": 0.9,
@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     },
     "asr": {
         "provider": "alibaba_bailian",
-        "model": "qwen3-asr-flash-realtime",
+        "model": "paraformer-realtime-v2",
         "sample_rate": 16000,
         "format": "pcm",
         "language": "zh",
@@ -55,8 +55,8 @@ DEFAULT_CONFIG = {
     },
     "tts": {
         "provider": "alibaba_bailian",
-        "model": "CosyVoice-v3-Flash",
-        "voice": "longxiaochun",
+        "model": "cosyvoice-v3-flash",
+        "voice": "longanrou_v3",
         "speed": 1.0,
         "pitch": 1.0,
         "volume": 1.0,
