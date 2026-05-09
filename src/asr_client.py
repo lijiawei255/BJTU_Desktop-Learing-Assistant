@@ -61,14 +61,7 @@ class ASRClient:
             if result.status_code == 200:
                 sentences = result.get_sentence()
                 if sentences:
-                    # Paraformer返回的是句子列表，提取每个句子的text
-                    texts = []
-                    for s in sentences:
-                        if isinstance(s, dict):
-                            texts.append(s.get("text", ""))
-                        elif hasattr(s, "text"):
-                            texts.append(s.text)
-                    full_text = "".join(texts).strip()
+                    full_text = self._extract_text(sentences)
                     if full_text:
                         logger.info(f"ASR result: {full_text}")
                         return full_text
@@ -81,6 +74,36 @@ class ASRClient:
         except Exception as e:
             logger.error(f"ASR recognition failed: {e}")
             return None
+
+    def _extract_text(self, sentences) -> str:
+        """从dashscope返回的sentence列表提取文本，兼容dict和object两种格式。
+
+        dashscope的get_sentence()返回格式不一致：
+        - 有时返回 [{"text": "...", "words": [...]}, ...]
+        - 有时text不在顶层而只在words[].text中
+        - 也可能是SDK对象（有.text/.words属性）
+        """
+        texts = []
+        for s in sentences:
+            if isinstance(s, dict):
+                text = s.get("text", "").strip()
+                if text:
+                    texts.append(text)
+                else:
+                    for w in s.get("words", []):
+                        if isinstance(w, dict):
+                            wt = w.get("text", "")
+                            if wt:
+                                texts.append(wt)
+            elif hasattr(s, "text"):
+                if s.text and s.text.strip():
+                    texts.append(s.text.strip())
+                elif hasattr(s, "words"):
+                    for w in s.words:
+                        wt = getattr(w, "text", "")
+                        if wt:
+                            texts.append(wt)
+        return "".join(texts).strip()
 
     def _save_pcm_to_wav(self, pcm_data: bytes, wav_path: str):
         """将PCM数据保存为WAV文件"""

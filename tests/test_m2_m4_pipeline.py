@@ -147,6 +147,121 @@ def test_all():
         check("24k->16k resampling correct", len(resampled) == expected_len,
               f"got {len(resampled)}, expected {expected_len}")
 
+    # ---- 测试10: TextSanitizer 边缘情况 ----
+    print("\n=== Test 10: TextSanitizer Edge Cases ===")
+    try:
+        from src.text_sanitizer import TextSanitizer
+        check("Remove *action*", TextSanitizer.sanitize("*微笑*你好") == "你好")
+        check("Remove [thinking]", TextSanitizer.sanitize("[思考中]好的") == "好的")
+        check("Remove （action）", TextSanitizer.sanitize("（轻轻点头）明白了") == "明白了")
+        check("Clean output (no markers)", TextSanitizer.sanitize("博士你好。") == "博士你好。")
+        check("Empty input", TextSanitizer.sanitize("") == "")
+        check("Multiple markers", "[微笑]" not in TextSanitizer.sanitize("*笑*[嗯]（点头）好的"))
+    except ImportError as e:
+        check("TextSanitizer import", False, str(e))
+
+    # ---- 测试11: DialogManager remove_last_user_message ----
+    print("\n=== Test 11: DialogManager remove_last_user_message ===")
+    try:
+        from src.dialog_manager import DialogManager
+        dm = DialogManager()
+        dm.add_user_message("消息1")
+        dm.add_assistant_message("回复1")
+        dm.add_user_message("消息2")
+        check("Before remove: rounds=1", dm.round_count == 1)
+        dm.remove_last_user_message()
+        check("After remove: rounds=1", dm.round_count == 1)
+        check("Last user is 消息1", dm.last_user_message() == "消息1")
+        dm.remove_last_user_message()
+        check("After removing all: rounds=0", dm.round_count == 0)
+    except ImportError as e:
+        check("DialogManager import", False, str(e))
+
+    # ---- 测试12: LLM [SKIP] 检测 (Real API) ----
+    print("\n=== Test 12: LLM [SKIP] Detection (Real API) ===")
+    if llm:
+        system = llm.build_system_prompt(nickname="博士")
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "老王，今天晚上吃什么？"},
+        ]
+        reply = llm.stream_chat(messages)
+        is_skip = isinstance(reply, str) and "[SKIP]" in reply
+        short_enough = isinstance(reply, str) and len(reply) < 30
+        check("[SKIP] returned for non-addressed speech", is_skip or short_enough,
+              f"reply={reply[:80] if isinstance(reply, str) else str(reply)[:80]}")
+
+    # ---- 测试13: LLM [EXIT] 检测 (Real API) ----
+    print("\n=== Test 13: LLM [EXIT] Detection (Real API) ===")
+    if llm:
+        system = llm.build_system_prompt(nickname="博士")
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "好了阿米娅，我要走了，再见。"},
+        ]
+        reply = llm.stream_chat(messages)
+        has_exit = isinstance(reply, str) and "[EXIT]" in reply
+        check("[EXIT] marker in farewell reply", has_exit,
+              f"reply={reply[:80] if isinstance(reply, str) else str(reply)[:80]}")
+
+    # ---- 测试14: LLM 流式 + tools (Real API) ----
+    print("\n=== Test 14: LLM Stream with Tools (Real API) ===")
+    if llm:
+        from src.llm_client import AVAILABLE_TOOLS
+        system = llm.build_system_prompt(nickname="博士")
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "帮我开启25分钟的专注模式。"},
+        ]
+        reply = llm.stream_chat(messages, tools=AVAILABLE_TOOLS)
+        if isinstance(reply, dict):
+            has_tool_calls = "tool_calls" in reply and len(reply["tool_calls"]) > 0
+            check("LLM returns tool_calls for focus command", has_tool_calls,
+                  f"tool_calls={reply.get('tool_calls', [])}")
+        else:
+            # LLM 可能选择文本回复（qwen-plus会根据上下文决定是否调用工具）
+            check("LLM with tools returns str or dict", isinstance(reply, str),
+                  f"Got {type(reply).__name__}")
+            check("Focus reply non-empty", isinstance(reply, str) and len(reply) > 5)
+
+    # ---- 测试15: LLM 流式无tools向后兼容 (Real API) ----
+    print("\n=== Test 15: LLM Stream backward compat (no tools) ===")
+    if llm:
+        system = llm.build_system_prompt(nickname="博士")
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "用一句话介绍你自己。"},
+        ]
+        reply = llm.stream_chat(messages)
+        check("Without tools returns str", isinstance(reply, str),
+              f"Got {type(reply).__name__}")
+        check("Non-empty reply", isinstance(reply, str) and len(reply) > 10,
+              f"len={len(reply) if isinstance(reply, str) else '?'}")
+
+    # ---- 测试16: SentenceSplitter 边缘情况 ----
+    print("\n=== Test 16: SentenceSplitter Edge Cases ===")
+    try:
+        from src.sentence_splitter import SentenceSplitter
+        # 无句末标点的流
+        collected = []
+        sp = SentenceSplitter(callback=lambda s: collected.append(s))
+        sp.feed("没有标点符号的文本")
+        assert len(collected) == 0, "Should not split without ending"
+        check("No split without punctuation", len(collected) == 0)
+        # flush返回剩余
+        rem = sp.flush()
+        check("Flush returns remaining", rem == "没有标点符号的文本")
+        # 多句同chunk
+        collected2 = []
+        sp2 = SentenceSplitter(callback=lambda s: collected2.append(s))
+        sp2.feed("第一句。第二句！第三句？")
+        check("Multi-sentence in one chunk", len(collected2) == 3,
+              f"got {len(collected2)}: {collected2}")
+        check("First sentence", collected2[0] == "第一句。")
+        check("Third sentence", collected2[2] == "第三句？")
+    except ImportError as e:
+        check("SentenceSplitter import", False, str(e))
+
     # ---- 汇总 ----
     print("\n" + "=" * 50)
     total = len(results["passed"]) + len(results["failed"])

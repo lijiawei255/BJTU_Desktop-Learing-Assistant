@@ -121,6 +121,104 @@ class LLMClient:
                 return "（助手似乎不知道怎么回答）"
         return f"（请求失败: {result.get('error', 'unknown')}）"
 
+    def stream_chat(
+        self,
+        messages: list,
+        on_text_chunk: Callable[[str], None] = None,
+        tools: list = None,
+        tool_choice: str = None,
+    ):
+        """
+        流式LLM对话，每个token增量通过 on_text_chunk(delta) 回调实时传出。
+
+        Args:
+            messages: OpenAI格式消息列表
+            on_text_chunk: 文本增量回调
+            tools: 可选的函数调用声明列表
+            tool_choice: 工具选择策略 ("auto", "none", 或指定工具)
+
+        Returns:
+            如果LLM返回tool_calls: {"text": str, "tool_calls": list}
+            否则: str (完整响应文本)
+        """
+        try:
+            logger.debug(
+                f"Starting stream chat with {len(messages)} msgs"
+                + (f", {len(tools)} tools" if tools else "")
+            )
+
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "result_format": "message",
+                "stream": True,
+                "incremental_output": True,
+            }
+            if tools:
+                kwargs["tools"] = tools
+            if tool_choice:
+                kwargs["tool_choice"] = tool_choice
+
+            response = Generation.call(**kwargs)
+
+            full_text = ""
+            tool_calls = []
+
+            def _safe(obj, attr, default=None):
+                """安全获取属性（dashscope SDK 缺失属性时抛 KeyError）"""
+                try:
+                    return getattr(obj, attr)
+                except (AttributeError, KeyError):
+                    return default
+
+            for chunk in response:
+                if chunk.status_code == 200:
+                    output = chunk.output
+                    if output and output.choices:
+                        choice = output.choices[0]
+                        msg = choice.message
+                        # 文本增量
+                        delta = _safe(msg, "content", "") or ""
+                        if delta:
+                            full_text += delta
+                            if on_text_chunk:
+                                on_text_chunk(delta)
+                        # 工具调用增量
+                        tc_deltas = _safe(msg, "tool_calls")
+                        if tc_deltas:
+                            for tc in tc_deltas:
+                                idx = _safe(tc, "index", len(tool_calls))
+                                while len(tool_calls) <= idx:
+                                    tool_calls.append(
+                                        {"id": "", "function": {"name": "", "arguments": ""}}
+                                    )
+                                tc_id = _safe(tc, "id", "")
+                                if tc_id:
+                                    tool_calls[idx]["id"] = tc_id
+                                fn = _safe(tc, "function")
+                                if fn:
+                                    fn_name = _safe(fn, "name", "")
+                                    if fn_name:
+                                        tool_calls[idx]["function"]["name"] = fn_name
+                                    tool_calls[idx]["function"]["arguments"] += _safe(fn, "arguments", "") or ""
+                else:
+                    logger.error(
+                        f"LLM stream error: code={chunk.status_code} msg={chunk.message}"
+                    )
+
+            logger.debug(f"Stream chat done: {len(full_text)} chars"
+                         + (f", {len(tool_calls)} tool_calls" if tool_calls else ""))
+            if tool_calls:
+                return {"text": full_text, "tool_calls": tool_calls}
+            return full_text
+
+        except Exception as e:
+            logger.error(f"LLM stream_chat failed: {e}")
+            return ""
+
 
 # 工具函数声明（供LLM function calling使用）
 AVAILABLE_TOOLS = [

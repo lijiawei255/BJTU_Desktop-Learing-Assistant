@@ -161,7 +161,11 @@ class WakeWordDetector:
 
     def _mock_listen(self) -> bool:
         """Mock模式：终端输入模拟唤醒"""
-        user_input = input("[MOCK] 输入唤醒词后按 Enter（直接按Enter模拟触发）: ")
+        try:
+            user_input = input("[MOCK] 输入唤醒词后按 Enter（直接按Enter模拟触发）: ")
+        except (EOFError, KeyboardInterrupt):
+            logger.info("[MOCK] Input stream ended (EOF/Interrupt), returning to IDLE.")
+            return False
         if user_input.strip().lower() in self.WAKE_WORDS or user_input.strip() == "":
             logger.info("[MOCK] Wake word triggered")
             return True

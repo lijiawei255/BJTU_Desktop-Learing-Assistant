@@ -1,6 +1,8 @@
-"""CosyVoice-v3-Flash TTS 客户端 - HTTP流式下载边下边播"""
+"""CosyVoice-v3-Flash TTS 客户端 - HTTP流式下载边下边播 + 后台句子队列"""
 
 import os
+import queue
+import threading
 import time
 import requests
 from pathlib import Path
@@ -30,6 +32,211 @@ class TTSClient:
         self.output_sample_rate = config.get("audio.sample_rate", 16000)
 
         logger.info(f"TTSClient initialized: model={self.model}, voice={self.voice}")
+
+        # 后台队列播放相关
+        self._sentence_queue: queue.Queue = queue.Queue()
+        self._playback_active = False
+        self._worker_thread: Optional[threading.Thread] = None
+        self._pyaudio_instance = None
+        self._idle_event = threading.Event()
+        self._idle_event.set()  # 初始状态：空闲
+
+        # 打断检测相关
+        self._barge_audio_handler = None
+        self._barge_vad = None
+        self._barge_triggered = False
+
+    # ── 打断检测配置 ──────────────────────────────────────────────
+
+    def set_barge_in_handler(self, audio_handler, vad) -> None:
+        """启用打断检测：传入 AudioHandler 和 VADHandler 实例。
+        设置后，所有队列播放都会在后台监听麦克风，检测到用户说话时立即停止。
+        """
+        self._barge_audio_handler = audio_handler
+        self._barge_vad = vad
+        logger.debug("Barge-in detection enabled")
+
+    @property
+    def was_barge_in(self) -> bool:
+        """最近一次播放是否被用户语音打断。"""
+        return self._barge_triggered
+
+    # ── 后台队列播放 API ──────────────────────────────────────────
+
+    def start_playback_worker(self):
+        """启动后台线程，持续从队列取句子→合成→播放。"""
+        if self._playback_active:
+            return
+        self._playback_active = True
+        self._idle_event.clear()
+        self._worker_thread = threading.Thread(
+            target=self._playback_loop, daemon=True
+        )
+        self._worker_thread.start()
+        logger.debug("TTS playback worker started")
+
+    def stop_playback(self):
+        """立即停止播放，清空未播放的句子队列。"""
+        self._playback_active = False
+        while not self._sentence_queue.empty():
+            try:
+                self._sentence_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._idle_event.set()
+        logger.debug("TTS playback stopped, queue cleared")
+
+    def enqueue_sentence(self, text: str):
+        """将一句文本加入合成播放队列（线程安全）。"""
+        if text and text.strip():
+            self._idle_event.clear()
+            self._sentence_queue.put(text.strip())
+
+    def wait_for_queue(self, timeout: float = None):
+        """阻塞直到队列中所有句子播放完毕。"""
+        try:
+            self._idle_event.wait(timeout=timeout)
+        except Exception:
+            pass
+
+    def _playback_loop(self):
+        """后台worker：从队列取句子→合成→播放，循环。若启用打断检测，被打断后停止。"""
+        import pyaudio
+
+        self._pyaudio_instance = pyaudio.PyAudio()
+        self._barge_triggered = False
+
+        while self._playback_active:
+            try:
+                sentence = self._sentence_queue.get(timeout=0.3)
+            except queue.Empty:
+                if self._sentence_queue.empty():
+                    self._idle_event.set()
+                continue
+
+            if not self._playback_active:
+                break
+
+            if not sentence or not sentence.strip():
+                if self._sentence_queue.empty():
+                    self._idle_event.set()
+                continue
+
+            # 合成（阻塞HTTP调用）
+            pcm_data = self.synthesize(sentence)
+            if not pcm_data or not self._playback_active:
+                if self._sentence_queue.empty():
+                    self._idle_event.set()
+                continue
+
+            # 播放（chunk级可中断，支持打断检测）
+            interrupted = self._play_pcm(pcm_data)
+            if interrupted:
+                self._barge_triggered = True
+                while not self._sentence_queue.empty():
+                    try:
+                        self._sentence_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                self._idle_event.set()
+                logger.info("TTS barge-in detected, stopping playback.")
+                break
+
+            if self._sentence_queue.empty():
+                self._idle_event.set()
+
+        if self._pyaudio_instance:
+            self._pyaudio_instance.terminate()
+            self._pyaudio_instance = None
+        self._idle_event.set()
+        logger.debug("TTS playback worker stopped")
+
+    def _play_pcm(self, pcm_data: bytes) -> bool:
+        """播放PCM数据，每chunk检查中断标志。
+        若已启用打断检测，播放同时监听麦克风：连续6帧(180ms)语音活动即打断。
+
+        Returns:
+            True 如果被打断，False 如果正常播放完毕。
+        """
+        import pyaudio
+
+        if not self._pyaudio_instance or not self._playback_active:
+            return False
+
+        # 重采样 24kHz → 16kHz
+        if self.sample_rate != self.output_sample_rate:
+            pcm_data = TTSClient.resample_24k_to_16k(pcm_data)
+
+        # 打断检测：启动麦克风监听线程
+        barge_event = threading.Event()
+
+        if self._barge_audio_handler and self._barge_vad:
+            ah = self._barge_audio_handler
+            vad = self._barge_vad
+            sample_rate = ah.sample_rate
+            chunk_size_frames = ah.chunk_size
+
+            def _monitor_mic():
+                try:
+                    mic_stream = self._pyaudio_instance.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=sample_rate,
+                        input=True,
+                        frames_per_buffer=chunk_size_frames,
+                    )
+                except Exception:
+                    return
+
+                speech_frames = 0
+                required_frames = 6  # ~180ms at 30ms/frame
+
+                while not barge_event.is_set():
+                    try:
+                        frame_data = mic_stream.read(
+                            chunk_size_frames, exception_on_overflow=False
+                        )
+                    except Exception:
+                        break
+                    if vad.is_speech(frame_data, sample_rate):
+                        speech_frames += 1
+                        if speech_frames >= required_frames:
+                            logger.debug("Barge-in: speech detected during TTS playback")
+                            barge_event.set()
+                            break
+                    else:
+                        speech_frames = max(0, speech_frames - 1)
+
+                mic_stream.stop_stream()
+                mic_stream.close()
+
+            monitor_thread = threading.Thread(target=_monitor_mic, daemon=True)
+            monitor_thread.start()
+
+        # 播放循环
+        stream = self._pyaudio_instance.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=self.output_sample_rate,
+            output=True,
+        )
+
+        chunk_size = 4096
+        interrupted = False
+        for i in range(0, len(pcm_data), chunk_size):
+            if not self._playback_active or barge_event.is_set():
+                interrupted = True
+                break
+            chunk = pcm_data[i : i + chunk_size]
+            stream.write(chunk)
+
+        stream.stop_stream()
+        stream.close()
+
+        barge_event.set()  # 信号监听线程退出
+        return interrupted
+
+    # ── 原有的直接合成/播放 API ──────────────────────────────────
 
     def speak(self, text: str) -> bool:
         """

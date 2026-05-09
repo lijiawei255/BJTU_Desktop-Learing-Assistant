@@ -63,6 +63,17 @@ DEFAULT_CONFIG = {
         "sample_rate": 24000,
         "output_format": "pcm",
     },
+    "streaming": {
+        "enable_sentence_tts": True,
+        "sentence_min_chars": 4,
+    },
+    "error_handling": {
+        "asr_retries": 1,
+        "llm_retries": 1,
+        "tts_retries": 1,
+        "max_consecutive_errors": 5,
+        "error_cooldown_seconds": 5,
+    },
     "vision": {
         "camera_width": 640,
         "camera_height": 480,
