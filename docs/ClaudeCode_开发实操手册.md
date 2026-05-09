@@ -2809,7 +2809,7 @@ python scripts/test_devices.py
 - `src/devices/tof_sensor.py` - I2C读取VL53L0X
 - `src/devices/ir_sensor.py` - GPIO读取红外传感器
 - `src/devices/led_controller.py` - GPIO PWM控制RGB LED
-- `src/devices/camera.py` - OpenCV读取USB摄像头
+- `src/devices/camera.py` - OpenCV读取OV5647 MIPI CSI摄像头
 - `src/devices/gpio_button.py` - GPIO中断读取按键
 
 ---

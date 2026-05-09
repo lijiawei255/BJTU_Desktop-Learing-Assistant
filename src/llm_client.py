@@ -168,10 +168,14 @@ class LLMClient:
             tool_calls = []
 
             def _safe(obj, attr, default=None):
-                """安全获取属性（dashscope SDK 缺失属性时抛 KeyError）"""
+                """安全获取属性或键值（流式模式下tc/fn为原生dict）"""
                 try:
                     return getattr(obj, attr)
                 except (AttributeError, KeyError):
+                    pass
+                try:
+                    return obj[attr]
+                except (TypeError, KeyError, IndexError):
                     return default
 
             for chunk in response:
@@ -193,7 +197,7 @@ class LLMClient:
                                 idx = _safe(tc, "index", len(tool_calls))
                                 while len(tool_calls) <= idx:
                                     tool_calls.append(
-                                        {"id": "", "function": {"name": "", "arguments": ""}}
+                                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
                                     )
                                 tc_id = _safe(tc, "id", "")
                                 if tc_id:
@@ -226,13 +230,13 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "set_focus_mode",
-            "description": "开启专注模式。用户说类似'我要学习'、'开始专注'、'我要专注25分钟'时调用。",
+            "description": "开启专注模式。用户说'我要学习'、'开始专注'、'我要专注25分钟'、'帮我计时30分钟'等意图时调用。如果当前已有专注模式进行中（可从系统提示中的[当前状态]得知），请先提醒用户结束当前专注模式，不要重复调用此函数。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "duration_minutes": {
                         "type": "integer",
-                        "description": "专注时长（分钟），默认25",
+                        "description": "专注时长（分钟）。如用户未明确指定则默认25分钟。",
                         "minimum": 5,
                         "maximum": 120,
                     }
@@ -244,15 +248,23 @@ AVAILABLE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "end_focus_mode",
+            "description": "结束当前专注模式。用户说'结束专注'、'停止专注'、'退出专注'、'不再学了'、'今天就到这里'、'可以了'等想结束当前学习时段的意图时调用。注意：这与临时拿手机不同（那应该用open_phone_box temporary），这是彻底结束本次专注。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "open_phone_box",
-            "description": "打开或临时打开手机盒。当用户说'我要接电话'、'拿手机'、'暂停一下'时调用。",
+            "description": "临时暂停专注并打开手机盒。用户说'暂停一下'、'拿一下手机'、'接个电话'、'临时休息一下'等需要短暂中断的意图时调用。注意：如果用户想彻底结束专注请用end_focus_mode。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
-                        "description": "打开原因：temporary（临时）/ complete（结束专注）",
-                        "enum": ["temporary", "complete"],
+                        "description": "打开原因：temporary（临时拿手机/暂停专注）",
+                        "enum": ["temporary"],
                     }
                 },
                 "required": ["reason"],
@@ -263,7 +275,7 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_focus_status",
-            "description": "查询当前专注模式状态。用户问'还剩多久'、'专注模式状态'时调用。",
+            "description": "查询当前专注模式状态。用户问'还剩多久'、'还有几分钟'、'专注多久了'、'进度怎么样'时调用。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -271,7 +283,7 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "set_user_nickname",
-            "description": "设置或修改用户称呼。当用户说'叫我XX'、'以后叫我XX'时调用。",
+            "description": "设置或修改用户称呼。用户说'叫我XX'、'以后叫我XX'、'我是XX'时调用。",
             "parameters": {
                 "type": "object",
                 "properties": {

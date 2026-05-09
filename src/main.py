@@ -1,5 +1,6 @@
 """Amiya 桌面学习助手 - 主程序入口"""
 
+import json
 import signal
 import sys
 import time
@@ -9,17 +10,18 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import config
-from src.utils.logger import setup_logger
+from src.asr_client import ASRClient
 from src.audio_handler import AudioHandler
+from src.config import config
+from src.dialog_manager import DialogManager
+from src.llm_client import AVAILABLE_TOOLS, LLMClient
+from src.sentence_splitter import SentenceSplitter
+from src.text_sanitizer import TextSanitizer
+from src.tool_executor import ToolExecutor
+from src.tts_client import TTSClient
+from src.utils.logger import setup_logger
 from src.vad_handler import VADHandler
 from src.wake_word_detector import WakeWordDetector
-from src.llm_client import LLMClient
-from src.asr_client import ASRClient
-from src.tts_client import TTSClient
-from src.text_sanitizer import TextSanitizer
-from src.sentence_splitter import SentenceSplitter
-from src.dialog_manager import DialogManager
 
 logger = setup_logger("main")
 
@@ -44,7 +46,7 @@ class AmiyaSystem:
         logger.info("Received stop signal.")
         self._running = False
 
-    def run_test(self):
+    def _run_voice_loop(self):
         """多轮语音对话 — 唤醒后支持连续对话+打断"""
         logger.info("\n[Milestone 5] Multi-turn Voice Dialogue\n")
 
@@ -61,9 +63,8 @@ class AmiyaSystem:
             logger.error("Please check your .env file and API key configuration.")
             return
 
-        dialog = DialogManager(
-            max_rounds=config.get("llm.max_context_rounds", 10)
-        )
+        dialog = DialogManager(max_rounds=config.get("llm.max_context_rounds", 10))
+        tool_executor = ToolExecutor()
 
         CONVERSATION_TIMEOUT = 20.0
         SILENCE_TURNS_LIMIT = 3
@@ -72,8 +73,8 @@ class AmiyaSystem:
         POST_TTS_SETTLE = 0.3  # TTS播放后短暂静置，避免残余语音被误捕获
 
         FALLBACK_MESSAGES = {
-            "asr": "抱歉，我没听清楚，能再说一遍吗？",
-            "llm": "网络好像不太稳定，请稍后再试。",
+            "asr": "好像没有听清你说什么呢。有需要的时候，再呼唤阿米娅，我就会醒来。",
+            "llm": "网络好像不太稳定，请稍后再呼唤阿米娅试试哦。",
         }
 
         print("\n" + "=" * 50)
@@ -113,9 +114,20 @@ class AmiyaSystem:
                             self._degraded_until = 0.0
                             self._consecutive_errors = 0
 
+                    # 检查专注计时器是否到期
+                    if tool_executor.timer_expired:
+                        logger.info("Focus timer expired — auto-ending focus mode")
+                        exec_result = tool_executor.execute(
+                            "end_focus_mode", {"_auto_expired": True}
+                        )
+                        tts.enqueue_sentence(exec_result["result"])
+                        tool_executor.timer_expired = False
+                        print(f"[阿米娅] {exec_result['result']}")
+
                     # 检查会话超时
                     if time.time() - last_activity > CONVERSATION_TIMEOUT:
                         logger.info("Conversation timeout, returning to IDLE.")
+                        tts.speak("有需要的时候，再呼唤阿米娅，我就会醒来哦。")
                         break
 
                     # 录音采集
@@ -125,6 +137,9 @@ class AmiyaSystem:
                         empty_turns += 1
                         if empty_turns >= SILENCE_TURNS_LIMIT:
                             logger.info("Too many silent turns, returning to IDLE.")
+                            tts.speak(
+                                "好像没有听到你说什么哦。有需要的时候，再呼唤阿米娅，我就会醒来。"
+                            )
                             break
                         continue
 
@@ -144,7 +159,9 @@ class AmiyaSystem:
                         if self._consecutive_errors >= MAX_ERRORS:
                             tts.speak(FALLBACK_MESSAGES["asr"])
                             self._degraded_until = time.time() + ERROR_COOLDOWN
-                            logger.warning("Entering degraded mode due to ASR failures.")
+                            logger.warning(
+                                "Entering degraded mode due to ASR failures."
+                            )
                             break
                         continue
 
@@ -159,7 +176,10 @@ class AmiyaSystem:
 
                     # 构建多轮对话上下文
                     dialog.add_user_message(user_text)
-                    system = llm.build_system_prompt(nickname="博士")
+                    system = llm.build_system_prompt(
+                        nickname=tool_executor.user_nickname,
+                        focus_status=tool_executor.get_status_for_llm(),
+                    )
                     messages = dialog.get_messages(system)
 
                     # ━━ 流式LLM + 句子级TTS ━━
@@ -189,12 +209,16 @@ class AmiyaSystem:
                         if not skip_detected:
                             splitter.feed(delta)
 
-                    reply = llm.stream_chat(messages, on_text_chunk=on_chunk)
+                    reply = llm.stream_chat(
+                        messages, on_text_chunk=on_chunk, tools=AVAILABLE_TOOLS
+                    )
 
                     # ━━ [SKIP] / [EXIT] 标记处理 ━━
                     if isinstance(reply, str):
                         if skip_detected or reply.strip().startswith("[SKIP]"):
-                            logger.info(f"LLM filtered non-addressed speech: '{user_text[:30]}'")
+                            logger.info(
+                                f"LLM filtered non-addressed speech: '{user_text[:30]}'"
+                            )
                             tts.stop_playback()
                             dialog.remove_last_user_message()
                             print("[阿米娅] （过滤非对话内容）")
@@ -215,9 +239,49 @@ class AmiyaSystem:
                             print(f"[阿米娅] {farewell}")
                             break  # 退出对话循环，回到 IDLE
                     else:
-                        # reply 是 dict（含 tool_calls），当前里程碑记录并跳过
-                        logger.info(f"LLM returned tool_calls: {reply.get('tool_calls', [])}")
-                        print(f"[阿米娅] (工具调用: {reply.get('tool_calls', [])})")
+                        # reply 是 dict（含 tool_calls），执行工具并反馈给LLM
+                        tool_calls = reply.get("tool_calls", [])
+                        if not tool_calls:
+                            logger.warning("LLM returned dict without tool_calls")
+                            continue
+
+                        logger.info(
+                            f"LLM returned {len(tool_calls)} tool_calls: {tool_calls}"
+                        )
+
+                        # 执行每个工具调用，并立即播放语音反馈
+                        tool_results = []
+                        for tc in tool_calls:
+                            fn_name = tc["function"]["name"]
+                            try:
+                                fn_args = json.loads(tc["function"]["arguments"])
+                            except (json.JSONDecodeError, KeyError):
+                                fn_args = {}
+                            exec_result = tool_executor.execute(fn_name, fn_args)
+                            logger.info(f"Tool {fn_name}({fn_args}) -> {exec_result}")
+                            tool_results.append(exec_result)
+                            print(f"[阿米娅] (执行操作: {exec_result['result']})")
+                            # 工具执行后立即播放语音反馈
+                            if exec_result.get("success"):
+                                tts.enqueue_sentence(exec_result["result"])
+
+                        # 将工具调用和结果注入对话历史
+                        dialog.add_tool_interaction(
+                            reply.get("text", ""), tool_calls, tool_results
+                        )
+
+                        # 再次请求LLM，基于工具结果生成自然语言回复
+                        # 重置流式状态（reply 此时是 dict，on_chunk 需要 str）
+                        skip_detected = False
+                        reply = ""
+                        system = llm.build_system_prompt(
+                            nickname=tool_executor.user_nickname,
+                            focus_status=tool_executor.get_status_for_llm(),
+                        )
+                        followup_messages = dialog.get_messages(system)
+                        reply = llm.stream_chat(
+                            followup_messages, on_text_chunk=on_chunk
+                        )
 
                     # 正常响应：刷新尾部句子
                     remainder = splitter.flush()
@@ -231,9 +295,7 @@ class AmiyaSystem:
                     tts.stop_playback()
 
                     t1_stream = time.time()
-                    logger.info(
-                        f"Pipeline done in {t1_stream - t0_stream:.1f}s"
-                    )
+                    logger.info(f"Pipeline done in {t1_stream - t0_stream:.1f}s")
 
                     if isinstance(reply, str):
                         if reply:
@@ -247,7 +309,9 @@ class AmiyaSystem:
                             if self._consecutive_errors >= MAX_ERRORS:
                                 tts.speak(FALLBACK_MESSAGES["llm"])
                                 self._degraded_until = time.time() + ERROR_COOLDOWN
-                                logger.warning("Entering degraded mode due to LLM failures.")
+                                logger.warning(
+                                    "Entering degraded mode due to LLM failures."
+                                )
                                 break
                     else:
                         # dict: tool_calls 响应，暂存文本部分供后续里程碑处理
@@ -258,7 +322,9 @@ class AmiyaSystem:
 
                     last_activity = time.time()
 
-                    print(f"[阿米娅] {reply if isinstance(reply, str) else reply.get('text', str(reply))}")
+                    print(
+                        f"[阿米娅] {reply if isinstance(reply, str) else reply.get('text', str(reply))}"
+                    )
                     logger.info(
                         f"State: WAITING — dialog round {dialog.round_count}, "
                         f"history {len(messages)} msgs, errors={self._consecutive_errors}"
@@ -286,12 +352,12 @@ class AmiyaSystem:
                 time.sleep(0.5)
                 continue
 
-        logger.info("\nTest complete. Exiting.")
+        logger.info("\nVoice loop ended.")
 
     def run(self):
         """主循环"""
         try:
-            self.run_test()
+            self._run_voice_loop()
         except KeyboardInterrupt:
             logger.info("Interrupted by user.")
         finally:

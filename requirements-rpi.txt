@@ -15,3 +15,15 @@ smbus2>=0.4.0
 
 # 音频重采样（CosyVoice 24kHz → 16kHz）
 # librosa        # 可选，取消注释以启用高质量重采样
+
+# PCA9685 16通道PWM舵机驱动板
+adafruit-circuitpython-servokit>=1.3.0
+
+# VL53L0X TOF激光测距传感器
+adafruit-circuitpython-vl53l0x>=1.1.0
+
+# Adafruit Blinka (CircuitPython硬件抽象层，board/busio依赖)
+Adafruit-Blinka>=8.0.0
+
+# MediaPipe — 面部网格检测（闭眼/转头走神检测）
+mediapipe>=0.10.0

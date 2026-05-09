@@ -30,6 +30,25 @@ class DialogManager:
                 self._history.pop(i)
                 return
 
+    def add_tool_interaction(self, assistant_text: str, tool_calls: list, tool_results: list):
+        """将LLM工具调用和结果注入对话历史"""
+        assistant_msg = {
+            "role": "assistant",
+            "content": assistant_text,
+            "tool_calls": tool_calls,
+        }
+        self._history.append(assistant_msg)
+        for tc, tr in zip(tool_calls, tool_results):
+            self._history.append({
+                "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "content": tr["result"] if isinstance(tr, dict) else str(tr),
+            })
+        # 修剪以保持在窗口内
+        limit = (self._max_rounds * 2) + 4
+        while len(self._history) > limit:
+            self._history.pop(0)
+
     def reset(self):
         """清空对话历史。"""
         self._history = []

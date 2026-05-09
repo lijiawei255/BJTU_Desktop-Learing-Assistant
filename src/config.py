@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
         "language": "zh",
         "first_run": True,
         "debug_mode": False,
+        "nickname": "博士",
     },
     "audio": {
         "sample_rate": 16000,
@@ -86,11 +87,20 @@ DEFAULT_CONFIG = {
         "tilt_pid": {"kp": 0.06, "ki": 0.008, "kd": 0.015},
         "pan_range": [0, 180],
         "tilt_range": [0, 90],
+        "default_pan_angle": 90,
+        "default_tilt_angle": 45,
         "face_lost_timeout": 10,
         "search_timeout": 3,
+        "scan_step_degrees": 5,
+        "scan_delay_ms": 200,
+        "ear_threshold": 0.2,
+        "distraction_confirm_frames": 10,
+        "distraction_interval_frames": 5,
+        "head_yaw_threshold": 20,
+        "head_pitch_threshold": 15,
     },
     "focus_mode": {
-        "default_duration_minutes": 25,
+        "default_duration_minutes": 40,
         "min_duration_minutes": 5,
         "max_duration_minutes": 120,
         "reminder_intervals": [600, 300, 60],
@@ -107,19 +117,28 @@ DEFAULT_CONFIG = {
     "ir_sensor": {
         "sample_interval_ms": 200,
         "debounce_count": 3,
+        "pin": 17,
+        "ir_debounce_seconds": 3,
     },
     "servo": {
         "box_open_angle": 0,
         "box_close_angle": 90,
         "box_movement_seconds": 1.0,
         "pwm_frequency": 50,
+        "pca9685_addr": 0x40,
+        "box_left_channel": 0,
+        "box_right_channel": 1,
+        "pan_channel": 2,
+        "tilt_channel": 3,
+        "min_pulse_us": 500,
+        "max_pulse_us": 2500,
     },
     "led": {
         "pins": {"r": 23, "g": 24, "b": 25},
         "breath_interval_ms": 4000,
     },
     "button": {
-        "pin": 5,
+        "pin": 27,
         "short_press_max_seconds": 1.0,
         "long_press_seconds": 3.0,
         "debounce_ms": 50,
@@ -197,11 +216,13 @@ class Config:
         self._save_config()
 
     def _save_config(self):
-        """保存当前配置到 data/config.json"""
+        """保存当前配置到 data/config.json（不含 api_keys）"""
         config_path = PROJECT_ROOT / "data" / "config.json"
         config_path.parent.mkdir(parents=True, exist_ok=True)
+        # 过滤敏感信息，api_keys 仅从 .env 加载
+        safe = {k: v for k, v in self._config.items() if k != "api_keys"}
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self._config, f, ensure_ascii=False, indent=2)
+            json.dump(safe, f, ensure_ascii=False, indent=2)
 
     @property
     def is_mock(self) -> bool:
