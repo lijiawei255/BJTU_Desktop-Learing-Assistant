@@ -14,6 +14,8 @@
 4. **所有代码可直接复制到文件中使用**，文件路径以项目根目录 `/home/pi/amiya/` 为基准（PC开发时可用任意目录）。
 5. **`.env` 文件不要提交到 Git**，API Key 只存本地。
 
+> **重要提醒：以下各里程碑中的代码清单反映开发早期的设计快照。实际源码已在此基础上演进并优化。模型名称、默认配置值、工具函数清单、架构细节等以 `src/` 中的实际代码为准。本文档的核心概念和架构思路仍然适用。**
+
 ---
 
 ## 1. 环境准备（一次性）
@@ -115,7 +117,7 @@ DEFAULT_CONFIG = {
     },
     "llm": {
         "provider": "alibaba_bailian",
-        "model": "qwen3.6-plus",
+        "model": "qwen-plus",
         "max_tokens": 512,
         "temperature": 0.7,
         "top_p": 0.9,
@@ -125,7 +127,7 @@ DEFAULT_CONFIG = {
     },
     "asr": {
         "provider": "alibaba_bailian",
-        "model": "qwen3-asr-flash-realtime",
+        "model": "paraformer-realtime-v2",
         "sample_rate": 16000,
         "format": "pcm",
         "language": "zh",
@@ -134,8 +136,8 @@ DEFAULT_CONFIG = {
     },
     "tts": {
         "provider": "alibaba_bailian",
-        "model": "CosyVoice-v3-Flash",
-        "voice": "longxiaochun",
+        "model": "cosyvoice-v3-flash",
+        "voice": "longanrou_v3",
         "speed": 1.0,
         "pitch": 1.0,
         "volume": 1.0,
@@ -158,7 +160,7 @@ DEFAULT_CONFIG = {
         "search_timeout": 3,
     },
     "focus_mode": {
-        "default_duration_minutes": 25,
+        "default_duration_minutes": 40,
         "min_duration_minutes": 5,
         "max_duration_minutes": 120,
         "reminder_intervals": [600, 300, 60],
@@ -187,7 +189,7 @@ DEFAULT_CONFIG = {
         "breath_interval_ms": 4000,
     },
     "button": {
-        "pin": 5,
+        "pin": 27,
         "short_press_max_seconds": 1.0,
         "long_press_seconds": 3.0,
         "debounce_ms": 50,
@@ -451,7 +453,7 @@ System running. Press Ctrl+C to stop.
 实现音频采集/播放、VAD语音活动检测、基于ASR的唤醒词确认三大基础能力。
 
 ### 说明
-由于 Picovoice/Porcupine 在中国大陆个人开发者场景下注册受限，本项目采用 **webrtcvad 本地检测语音活动 + 千问3-ASR-Flash-Realtime 流式识别确认唤醒词** 的方案。该方案无需任何海外注册，纯中国大陆可用。
+由于 Picovoice/Porcupine 在中国大陆个人开发者场景下注册受限，本项目采用 **webrtcvad 本地检测语音活动 + Paraformer-Realtime-V2 流式识别确认唤醒词** 的方案。该方案无需任何海外注册，纯中国大陆可用。
 
 ### 2.1 音频处理模块（含Mock）
 
@@ -682,7 +684,7 @@ class VADHandler:
 创建 `src/wake_word_detector.py`：
 
 ```python
-"""唤醒词检测 - 基于 webrtcvad + 千问3-ASR-Flash-Realtime 流式识别"""
+"""唤醒词检测 - 基于 webrtcvad + Paraformer-Realtime-V2 流式识别"""
 
 import time
 import threading
@@ -698,7 +700,7 @@ class WakeWordDetector:
     """唤醒词检测器 - 使用VAD检测语音 + ASR流式识别确认唤醒词"""
 
     # 唤醒词列表（小写，用于匹配）
-    WAKE_WORDS = ["阿米娅", "amiya"]
+    WAKE_WORDS = ["阿米娅", "amiya", "amia", "阿米亚", "am iya", "a miya"]
     # 唤醒后冷却时间（秒）
     COOLDOWN_SECONDS = 5
 
@@ -857,7 +859,7 @@ class AmiyaSystem:
         self.vad = VADHandler()
         self.wake = WakeWordDetector()
 
-    def run_test(self):
+    def run(self):  # 实际代码中为 run() → _run_voice_loop()
         """里程碑2测试：VAD语音检测 + ASR唤醒确认 + 录音"""
         logger.info("\n[Milestone 2 Test] VAD + ASR Wake Word + Recording")
         logger.info("Step 1: Waiting for wake word (VAD + ASR)...")
@@ -882,7 +884,7 @@ class AmiyaSystem:
     def run(self):
         """主循环"""
         try:
-            self.run_test()
+            self.run()  # 实际代码中为 run() → _run_voice_loop()
             logger.info("\nTest complete. Exiting.")
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
@@ -975,7 +977,7 @@ class LLMClient:
             raise ValueError("ALIBABA_API_KEY required")
 
         dashscope.api_key = self.api_key
-        self.model = config.get("llm.model", "qwen3.6-plus")
+        self.model = config.get("llm.model", "qwen-plus")
         self.max_tokens = config.get("llm.max_tokens", 512)
         self.temperature = config.get("llm.temperature", 0.7)
         self.top_p = config.get("llm.top_p", 0.9)
@@ -1106,8 +1108,8 @@ AVAILABLE_TOOLS = [
                 "properties": {
                     "reason": {
                         "type": "string",
-                        "description": "打开原因：temporary（临时）/ complete（结束专注）",
-                        "enum": ["temporary", "complete"],
+                        "description": "打开原因：temporary（临时拿手机/暂停专注）",
+                        "enum": ["temporary"],
                     }
                 },
                 "required": ["reason"],
@@ -1144,10 +1146,10 @@ AVAILABLE_TOOLS = [
 
 ### 3.2 测试 LLM 连接
 
-修改 `src/main.py` 的 `run_test` 方法：
+修改 `src/main.py` 的 `run` 方法（实际代码中为 `run()` → `_run_voice_loop()`）：
 
 ```python
-    def run_test(self):
+    def run(self):  # 实际代码中为 run() → _run_voice_loop()
         """里程碑3测试：LLM对话"""
         logger.info("\n[Milestone 3 Test] LLM Chat")
 
@@ -1211,14 +1213,14 @@ Amiya: 牛顿第二定律说的是...（耐心讲解的内容）...
 ## 里程碑 4：ASR + TTS 接入（百炼API）
 
 ### 目标
-接入千问3-ASR-Flash-Realtime 和 CosyVoice-v3-Flash，实现完整的语音输入输出。
+接入Paraformer-Realtime-V2 和 cosyvoice-v3-flash，实现完整的语音输入输出。
 
 ### 4.1 ASR 客户端
 
 创建 `src/asr_client.py`：
 
 ```python
-"""千问3-ASR-Flash-Realtime 语音识别客户端"""
+"""Paraformer-Realtime-V2 语音识别客户端"""
 
 import os
 import json
@@ -1246,7 +1248,7 @@ class ASRClient:
             raise ValueError("ALIBABA_API_KEY required")
 
         dashscope.api_key = self.api_key
-        self.model = config.get("asr.model", "qwen3-asr-flash-realtime")
+        self.model = config.get("asr.model", "paraformer-realtime-v2")
         self.sample_rate = config.get("asr.sample_rate", 16000)
         self.language = config.get("asr.language", "zh")
         self.max_audio_seconds = config.get("asr.max_audio_seconds", 60)
@@ -1334,7 +1336,7 @@ class SpeechRecognizer(ASRClient):
 创建 `src/tts_client.py`：
 
 ```python
-"""CosyVoice-v3-Flash TTS 客户端"""
+"""cosyvoice-v3-flash TTS 客户端"""
 
 import os
 import tempfile
@@ -1359,8 +1361,8 @@ class TTSClient:
             raise ValueError("ALIBABA_API_KEY required")
 
         dashscope.api_key = self.api_key
-        self.model = config.get("tts.model", "CosyVoice-v3-Flash")
-        self.voice = config.get("tts.voice", "longxiaochun")
+        self.model = config.get("tts.model", "cosyvoice-v3-flash")
+        self.voice = config.get("tts.voice", "longanrou_v3")
         self.speed = config.get("tts.speed", 1.0)
         self.pitch = config.get("tts.pitch", 1.0)
         self.volume = config.get("tts.volume", 1.0)
@@ -1452,7 +1454,7 @@ from src.tts_client import TTSClient
 ```
 
 ```python
-    def run_test(self):
+    def run(self):  # 实际代码中为 run() → _run_voice_loop()
         """里程碑4测试：ASR + TTS + LLM完整链路"""
         logger.info("\n[Milestone 4 Test] Full Voice Pipeline")
 
@@ -1709,6 +1711,8 @@ def get_led():
     return LEDMock()
 ```
 
+> **注意：实际设备管理器 `src/devices/__init__.py` 暴露 10 个工厂函数**（含 `get_pan_servo`、`get_tilt_servo`、`get_box_servo_left`、`get_box_servo_right`、`get_camera`、`get_button` 等），支持独立的左右舵机和摄像头/按钮管理。以上代码为 M5 早期的简化版。
+
 ### 5.3 工具函数执行器
 
 创建 `src/tool_executor.py`：
@@ -1831,6 +1835,8 @@ class ToolExecutor:
         return "未开启专注模式"
 ```
 
+> **注意：实际 `ToolExecutor` 实现更为完整**，包含：`FocusTimer` 独立守护线程（每秒倒计时）、IR 传感器 debounce 滤波、摄像头跟踪集成（`_on_distraction` 回调）、`end_focus_mode` 工具、冲突检测、`timer_expired` 属性等。详见 `src/tool_executor.py`。
+
 ### 5.4 更新 main.py 测试函数调用
 
 ```python
@@ -1838,7 +1844,7 @@ from src.tool_executor import ToolExecutor
 ```
 
 ```python
-    def run_test(self):
+    def run(self):  # 实际代码中为 run() → _run_voice_loop()
         """里程碑5测试：函数调用 + Mock设备"""
         logger.info("\n[Milestone 5 Test] Function Calling + Mock Devices")
 
@@ -1919,6 +1925,8 @@ Amiya: 好的博士，25分钟专注模式已经开始了...
 
 ### 目标
 实现对话上下文滑动窗口、自动摘要、短期/长期记忆存储。
+
+> **⚠️ M6 里程碑代码清单仅作为规划参考。`MemoryManager` 尚未实现。当前对话历史由 `src/dialog_manager.py`（轻量消息列表）管理，记忆系统功能待后续里程碑实现。**
 
 ### 6.1 记忆管理器
 
@@ -2230,7 +2238,7 @@ from src.dialog_manager import DialogManager
 ```
 
 ```python
-    def run_test(self):
+    def run(self):  # 实际代码中为 run() → _run_voice_loop()
         """里程碑6测试：完整对话循环（含记忆）"""
         logger.info("\n[Milestone 6 Test] Dialog Loop with Memory")
         dialog = DialogManager()
@@ -2283,6 +2291,8 @@ Session saved.
 
 ### 目标
 实现完整的专注模式状态机（IDLE → WAITING_PHONE → BOX_CLOSED → FOCUSING ↔ PAUSED → COMPLETED）。
+
+> **⚠️ M7 里程碑代码清单仅作为规划参考。`StateController` 和 `FocusState` 枚举尚未实现。当前专注模式状态管理使用 `src/tool_executor.py` 中的布尔标志 + `FocusTimer` 守护线程完成。**
 
 ### 7.1 状态机实现
 
@@ -2531,6 +2541,8 @@ python -m src.main
 ### 目标
 将视觉、传感器、外设控制拆分为独立子进程，通过 Queue 通信。
 
+> **⚠️ M8 里程碑代码清单仅作为规划参考。多进程架构和消息总线尚未实现。当前所有模块在单进程中运行。**
+
 ### 8.1 消息总线
 
 创建 `src/message_bus.py`：
@@ -2777,8 +2789,8 @@ gpiozero pigpio smbus2
 sudo raspi-config  # 启用 I2C, SPI, Camera
 sudo usermod -a -G gpio,i2c,spi $USER
 
-# 5. 测试硬件
-python scripts/test_devices.py
+# 5. 测试硬件（实际测试文件为 tests/test_m5_devices.py）
+python -m pytest tests/test_m5_devices.py -v
 ```
 
 ### 切换Mock到真实设备
@@ -2804,12 +2816,13 @@ python scripts/test_devices.py
 
 ### 真实设备驱动文件
 
-需要创建（在阶段2完成）：
-- `src/devices/servo_controller.py` - GPIO PWM控制舵机
-- `src/devices/tof_sensor.py` - I2C读取VL53L0X
-- `src/devices/ir_sensor.py` - GPIO读取红外传感器
-- `src/devices/led_controller.py` - GPIO PWM控制RGB LED
-- `src/devices/camera.py` - OpenCV读取OV5647 MIPI CSI摄像头
+已在 M5 实现（阶段1已完成）：
+- `src/devices/servo_controller.py` — PCA9685 I2C PWM 控制舵机 ✅
+- `src/devices/tof_sensor.py` — I2C 读取 VL53L0X ✅
+- `src/devices/ir_sensor.py` — GPIO 读取红外传感器 ✅
+- `src/devices/led_controller.py` — GPIO PWM 控制 RGB LED ✅
+- `src/devices/camera.py` — PID 跟踪 + MediaPipe 走神检测 ✅
+- `src/devices/gpio_button.py` — GPIO 物理按钮 + Mock ✅
 - `src/devices/gpio_button.py` - GPIO中断读取按键
 
 ---
