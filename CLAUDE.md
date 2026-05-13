@@ -113,14 +113,19 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 | M1: Project skeleton | ✅ Done |
 | M2-M4: Audio pipeline + LLM + ASR/TTS | ✅ Done |
 | M5: Function calling + mock devices | ✅ Done |
-| M6: Context management + memory | ❌ Next |
-| M7: Focus state machine | ❌ Planned |
-| M8: Multiprocess architecture | ❌ Planned |
+| M6: Context management + memory | ✅ Done |
+| M7: Focus state machine | ✅ Done |
+| M8: Multiprocess architecture | 🔄 In Progress |
 
 ## Key Files for M6+ Development
 
-- `src/tool_executor.py` — Focus lifecycle (will be refactored into `state_controller.py` in M7)
-- `src/dialog_manager.py` — Message history (will integrate `memory_manager.py` in M6)
+- `src/memory_manager.py` — Cross-session memory, context compression, nickname/preferences
+- `src/state_controller.py` — Focus state machine (IDLE → WAITING_PHONE → BOX_CLOSED → FOCUSING ↔ PAUSED → COMPLETED)
+- `src/message_bus.py` — IPC message bus for multiprocess communication
+- `src/processes/device_process.py` — Peripheral control subprocess (servo + LED)
+- `src/processes/sensor_process.py` — Sensor subprocess (TOF + IR)
+- `src/processes/vision_process.py` — Vision subprocess (camera tracking + distraction)
+- `src/tool_executor.py` — Focus lifecycle (delegates to StateController)
 - `src/devices/__init__.py` — Device factory (add new devices here)
 - `src/devices/camera.py` — PID tracker + MediaPipe distraction detector (`PIDController` 在此文件中，非独立 `utils/pid.py`)
 - `src/config.py` — All config keys defined here

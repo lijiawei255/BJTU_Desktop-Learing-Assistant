@@ -15,7 +15,7 @@ Amiya is an AI voice companion device for students, built around LLM voice inter
 | Posture Corrector | TOF distance sensor monitors sitting posture, voice reminders when too close |
 | Distraction Monitor | Pan-tilt camera with face tracking + MediaPipe face mesh for eyes-closed/head-turn detection |
 | LED Indicator | Multi-color RGB LED displays system state |
-| Context & Memory | Multi-turn dialog history, session memory (M6 planned) |
+| Context & Memory | Multi-turn dialog history, context compression, session & long-term memory |
 
 ## Prerequisites
 
@@ -224,9 +224,9 @@ To test with a real microphone on PC, edit `data/config.json` and set `"audio": 
 | M1 | Project skeleton: directory structure, dependencies, logging | ✅ Done |
 | M2-M4 | Audio pipeline + LLM + ASR/TTS full voice interaction chain | ✅ Done |
 | M5 | Function calling + mock peripherals + real hardware drivers | ✅ Done |
-| M6 | Context management + memory system | 🔜 Next |
-| M7 | Focus mode state machine | 📋 Planned |
-| M8 | Multi-process framework + sensor process | 📋 Planned |
+| M6 | Context management + memory system | ✅ Done |
+| M7 | Focus mode state machine | ✅ Done |
+| M8 | Multi-process framework + sensor process | 🔄 In Progress |
 | Phase 2 | Raspberry Pi hardware integration | 📋 Planned |
 
 ## Contributing

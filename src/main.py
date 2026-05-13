@@ -15,6 +15,7 @@ from src.audio_handler import AudioHandler
 from src.config import config
 from src.dialog_manager import DialogManager
 from src.llm_client import AVAILABLE_TOOLS, LLMClient
+from src.memory_manager import MemoryManager
 from src.sentence_splitter import SentenceSplitter
 from src.text_sanitizer import TextSanitizer
 from src.tool_executor import ToolExecutor
@@ -63,7 +64,11 @@ class AmiyaSystem:
             logger.error("Please check your .env file and API key configuration.")
             return
 
-        dialog = DialogManager(max_rounds=config.get("llm.max_context_rounds", 10))
+        dialog = DialogManager(
+            max_rounds=config.get("llm.max_context_rounds", 10),
+        )
+        memory = MemoryManager()
+        dialog._memory = memory
         tool_executor = ToolExecutor()
 
         CONVERSATION_TIMEOUT = 20.0
@@ -179,8 +184,11 @@ class AmiyaSystem:
                     system = llm.build_system_prompt(
                         nickname=tool_executor.user_nickname,
                         focus_status=tool_executor.get_status_for_llm(),
+                        memory_summary=memory.get_memory_summary(),
                     )
-                    messages = dialog.get_messages(system)
+                    messages = dialog.get_messages(
+                        system, memory_summary=memory.get_memory_summary()
+                    )
 
                     # ━━ 流式LLM + 句子级TTS ━━
                     logger.info("State: PROCESSING — Streaming LLM + TTS")
@@ -264,6 +272,11 @@ class AmiyaSystem:
                             # 工具执行后立即播放语音反馈
                             if exec_result.get("success"):
                                 tts.enqueue_sentence(exec_result["result"])
+                            # 昵称变更同步到长期记忆
+                            if fn_name == "set_user_nickname" and exec_result.get("success"):
+                                nickname = fn_args.get("nickname", "")
+                                if nickname:
+                                    memory.set_nickname(nickname)
 
                         # 将工具调用和结果注入对话历史
                         dialog.add_tool_interaction(
@@ -277,8 +290,11 @@ class AmiyaSystem:
                         system = llm.build_system_prompt(
                             nickname=tool_executor.user_nickname,
                             focus_status=tool_executor.get_status_for_llm(),
+                            memory_summary=memory.get_memory_summary(),
                         )
-                        followup_messages = dialog.get_messages(system)
+                        followup_messages = dialog.get_messages(
+                            system, memory_summary=memory.get_memory_summary()
+                        )
                         reply = llm.stream_chat(
                             followup_messages, on_text_chunk=on_chunk
                         )
@@ -334,6 +350,12 @@ class AmiyaSystem:
                     time.sleep(POST_TTS_SETTLE)
 
                     print()  # 空行分隔下一轮
+
+                # ━━ 会话结束：保存到记忆 ━━
+                history = dialog.get_history()
+                if history:
+                    memory.save_session(history, tool_executor.user_nickname)
+                    logger.info("Conversation session saved to memory.")
 
             except KeyboardInterrupt:
                 break
