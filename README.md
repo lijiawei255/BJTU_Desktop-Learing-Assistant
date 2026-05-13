@@ -1,172 +1,251 @@
 # BJTU Desktop Learning Assistant (Amiya)
 
-桌面学习助手"阿米娅（Amiya）"——面向学生的 AI 语音陪伴设备，以大模型语音交互为核心，集成手机收纳管理、坐姿监测、走神追踪等功能。
+[English](README.md) | [中文](README_CN.md)
 
-> 当前阶段：**里程碑5已完成**（函数调用 + Mock外设层 + 真实硬件驱动）。PC Mock模式开箱即用，无需硬件。
+Amiya is an AI voice companion device for students, built around LLM voice interaction with integrated phone storage management, posture monitoring, and distraction tracking.
 
-## 技术栈
+> **Status**: Milestone 5 complete — Function calling + Mock peripherals + Real hardware drivers. Runs out of the box on PC in mock mode (no hardware required). Target deployment: Raspberry Pi 5.
 
-| 层级 | 技术 |
-|------|------|
-| 大模型服务 | 阿里云百炼 API（qwen-plus / Paraformer-Realtime / CosyVoice-v3-Flash） |
-| 语音前端 | webrtcvad + PyAudio + 流式 ASR 唤醒词检测 |
-| 视觉处理 | OpenCV Haar Cascade + MediaPipe Face Mesh（闭眼/转头走神检测） |
-| 人脸跟踪 | PID 控制 + 云台舵机自动扫描 |
-| 开发语言 | Python 3.11 |
-| 包管理 | Anaconda3 + pip |
-| 部署平台 | Windows 11（PC Mock 开发）→ 树莓派 5（真实硬件部署） |
+## Features
 
-## 快速开始
+| Module | Description |
+|--------|-------------|
+| Voice Assistant | LLM-powered multi-turn voice conversation (CN/EN), Amiya character persona |
+| Phone Manager | Voice-activated focus mode: IR sensor detects phone placement, servo-controlled box lid |
+| Posture Corrector | TOF distance sensor monitors sitting posture, voice reminders when too close |
+| Distraction Monitor | Pan-tilt camera with face tracking + MediaPipe face mesh for eyes-closed/head-turn detection |
+| LED Indicator | Multi-color RGB LED displays system state |
+| Context & Memory | Multi-turn dialog history, context compression, session & long-term memory |
 
-### 1. 克隆仓库
+## Prerequisites
+
+- **Python 3.11** (recommended: [Anaconda3](https://www.anaconda.com/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html))
+- **Windows 11 / macOS / Linux** (PC mock mode — no hardware needed)
+- **Alibaba Cloud Bailian API Key** — [Get one free](https://bailian.console.aliyun.com/) (Mainland China accessible)
+- **Microphone + Speaker** (only needed when running in real audio mode; mock mode uses text console)
+
+## Quick Start
+
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/lijiawei255/BJTU_Desktop-Learing-Assistant.git
 cd BJTU_Desktop-Learing-Assistant
 ```
 
-### 2. 安装依赖
+### 2. Set up Python environment
 
 ```bash
-# PC 开发只需核心依赖（Mock 模式无需硬件）
-pip install -r requirements.txt
+# Option A: Using conda (recommended)
+conda create -n amiya python=3.11 -y
+conda activate amiya
 
-# 可选：安装开发工具（测试/格式化）
-pip install -r requirements-dev.txt
-
-# 树莓派部署时才需要（含 gpiozero / MediaPipe / PCA9685 等）
-# pip install -r requirements-rpi.txt
+# Option B: Using system Python 3.11 + venv
+python3.11 -m venv amiya-env
+source amiya-env/bin/activate   # Linux/macOS
+# amiya-env\Scripts\activate    # Windows
 ```
 
-### 3. 配置 API Key
+### 3. Install dependencies
+
+```bash
+# Core dependencies (mock mode — all you need for PC development)
+pip install -r requirements.txt
+
+# Optional: Development tools (testing, formatting)
+pip install -r requirements-dev.txt
+```
+
+**Expected output**: All packages install without errors. Verify with:
+```bash
+python -c "import webrtcvad, pyaudio, dashscope, cv2; print('OK')"
+```
+
+### 4. Configure API Key
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入阿里云百炼 API Key
-# 获取地址：https://bailian.console.aliyun.com/
 ```
 
-### 4. 运行
+Edit `.env` and set your Bailian API key:
+```
+ALIBABA_API_KEY=sk-your-real-api-key
+```
+
+Get your key at: https://bailian.console.aliyun.com/
+
+> **Important**: `.env` is gitignored. Never commit it or expose your API key.
+
+### 5. Run
 
 ```bash
-# Mock 模式（默认，无需麦克风/硬件）
+# Mock mode (default — no hardware or microphone needed)
 python -m src.main
-
-# 真实语音交互模式：编辑 data/config.json → mock.audio 改为 false
 ```
 
-### 5. 运行测试
+In mock mode, you interact with Amiya through the **text console**:
+- Type any wake word (`amiya`, `阿米娅`, `amia`) to wake up the assistant
+- Type your message after the `[You]` prompt
+- Type `exit`, `quit`, or send EOF (Ctrl+Z on Windows / Ctrl+D on Linux) to stop
+
+### 6. Run tests (optional)
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-## Mock 模式说明
+**Expected**: All tests pass (28 M5 device tests + pipeline integration tests + audio device test).
 
-项目支持 **Mock/Real 双模式**，通过 `data/config.json` 中的 `mock` 字段逐设备控制：
+## Mock Mode
+
+The project supports **per-device mock/real switching** via `data/config.json`:
 
 ```json
 {
   "mock": {
-    "enabled": true,    // 总开关：false 则全部使用真实驱动
-    "audio": true,      // true=模拟ASR/TTS，false=真实麦克风/扬声器
-    "servo": true,      // true=日志模拟，false=PCA9685 I2C 驱动
-    "ir": true,         // true=模拟红外，false=GPIO 轮询
-    "tof": true,        // true=模拟距离，false=VL53L0X I2C
-    "led": true,        // true=日志模拟，false=GPIO PWM
-    "camera": true,     // true=模拟跟踪，false=OV5647 + MediaPipe
+    "enabled": true,
+    "audio": true,
+    "servo": true,
+    "ir": true,
+    "tof": true,
+    "led": true,
+    "camera": true,
     "button": true
   }
 }
 ```
 
-PC 开发默认全部 Mock；树莓派部署时设置 `"enabled": false` 即可切换到真实驱动。
+| Setting | `true` (Mock) | `false` (Real) |
+|---------|---------------|-----------------|
+| `audio` | Console text I/O (ASR/TTS simulated) | Real microphone + speaker via PyAudio |
+| `servo` | Log output only | PCA9685 I2C PWM servo control |
+| `ir` | Simulated phone detect/remove | GPIO 17 IR sensor polling |
+| `tof` | Simulated distance patterns | VL53L0X I2C ToF sensor |
+| `led` | Log output only | GPIO 23/24/25 RGB LED PWM |
+| `camera` | Simulated face position | OV5647 MIPI CSI + MediaPipe |
+| `button` | Simulated press | GPIO 27 physical button |
 
----
+**PC development**: All mocks `true` — runs anywhere with no hardware.  
+**Raspberry Pi deployment**: Set `"enabled": false` to switch all devices to real drivers.
 
-## 项目结构
+### Real Audio Mode (PC with microphone)
+
+To test with a real microphone on PC, edit `data/config.json` and set `"audio": false` under `mock`. Restart `python -m src.main` — the system will use PyAudio for recording/playback and call cloud APIs for ASR/TTS.
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `ModuleNotFoundError: No module named 'pkg_resources'` | Run `pip install "setuptools>=65.0,<70.0"` — newer setuptools removed this module required by webrtcvad |
+| `Could not find PyAudio` | Windows: install PyAudio wheel from https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio. Linux: `sudo apt install portaudio19-dev && pip install pyaudio` |
+| API error / connection failed | Verify ALIBABA_API_KEY in `.env` is correct and network can reach `dashscope.aliyuncs.com` |
+| `python: command not found` | Use `python3` instead, or ensure Python 3.11 is in your PATH |
+| Conda not found | Install Anaconda3 or Miniconda first, then restart your terminal |
+| Slow pip installs in China | Use Tsinghua mirror: `pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple` |
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| LLM | Alibaba Cloud Bailian API — `qwen-plus` |
+| ASR | Bailian Paraformer-Realtime-V2 (streaming speech recognition) |
+| TTS | Bailian cosyvoice-v3-flash (voice: `longanrou_v3`) |
+| Voice Frontend | webrtcvad + PyAudio + streaming ASR wake word detection |
+| Vision | OpenCV Haar Cascade + MediaPipe Face Mesh |
+| Face Tracking | PID control + pan-tilt servo auto-scan |
+| Language | Python 3.11 |
+| Package Management | pip / conda (environment.yml) |
+| Platforms | Windows 11 (dev) → Raspberry Pi 5 (deploy) |
+
+## Project Structure
 
 ```
 ├── src/
-│   ├── main.py                  # 主入口：语音对话循环 + 工具调用集成
-│   ├── config.py                # 全局配置（默认值 + config.json + .env 合并）
-│   ├── tool_executor.py         # 工具执行器 + FocusTimer + 专注模式生命周期
-│   ├── dialog_manager.py        # 多轮对话历史管理
-│   ├── llm_client.py            # LLM 客户端（流式对话 + 工具声明）
-│   ├── asr_client.py            # 阿里云百炼 ASR 语音识别
-│   ├── tts_client.py            # 阿里云百炼 TTS 语音合成
-│   ├── audio_handler.py         # PyAudio 音频采集 / 播放
-│   ├── vad_handler.py           # WebRTC VAD 语音活动检测
-│   ├── wake_word_detector.py    # VAD + ASR 唤醒词检测
-│   ├── text_sanitizer.py        # LLM 输出文本清洗
-│   ├── sentence_splitter.py     # 流式句子分割（用于流式 TTS）
-│   ├── devices/                 # 硬件驱动层
-│   │   ├── __init__.py          # 设备管理器（Mock/Real 路由工厂函数）
-│   │   ├── servo_mock.py        # 舵机 Mock
-│   │   ├── servo_controller.py  # PCA9685 SG90 舵机真实驱动
-│   │   ├── ir_sensor_mock.py    # 红外传感器 Mock
-│   │   ├── ir_sensor.py         # GPIO 红外避障真实驱动
-│   │   ├── tof_sensor_mock.py   # TOF 距离传感器 Mock
-│   │   ├── tof_sensor.py        # VL53L0X I2C 真实驱动
-│   │   ├── led_mock.py          # RGB LED Mock
-│   │   ├── led_controller.py    # GPIO PWM LED 真实驱动
-│   │   ├── camera.py            # OV5647 摄像头（PID跟踪 + MediaPipe走神检测）
-│   │   └── gpio_button.py       # GPIO 物理按钮 + Mock
-│   ├── processes/               # 子进程模块（M8 实现）
-│   ├── utils/                   # 日志、重试工具
-│   └── models/                  # 本地 ONNX 模型目录（预留）
-├── system_prompts/              # Amiya 角色人格提示词
-├── tests/                       # 测试（38个M5设备测试 + pipeline集成测试）
-├── docs/                        # 开发文档
-├── data/                        # 运行时数据（config.json 已 gitignore）
-├── logs/                        # 日志（已 gitignore）
-├── requirements.txt             # 核心依赖
-├── requirements-dev.txt         # 开发依赖（pytest/black）
-├── requirements-rpi.txt         # 树莓派专用依赖
-├── environment.yml              # Conda 环境
-├── CLAUDE.md                    # Claude Code 开发指南
-└── .env.example                 # 环境变量模板
+│   ├── main.py                  # Entry point: voice conversation loop + tool integration
+│   ├── config.py                # Global config (defaults + config.json + .env merge)
+│   ├── tool_executor.py         # Tool executor + FocusTimer + focus mode lifecycle
+│   ├── dialog_manager.py        # Multi-turn conversation history manager
+│   ├── llm_client.py            # LLM client (streaming chat + tool declarations)
+│   ├── asr_client.py            # Bailian ASR speech recognition
+│   ├── tts_client.py            # Bailian TTS speech synthesis (with barge-in)
+│   ├── audio_handler.py         # PyAudio recording / playback
+│   ├── vad_handler.py           # WebRTC voice activity detection
+│   ├── wake_word_detector.py    # VAD + ASR wake word detection (8 variants)
+│   ├── text_sanitizer.py        # LLM output text cleaner
+│   ├── sentence_splitter.py     # Streaming sentence segmentation (for streaming TTS)
+│   ├── devices/                 # Hardware driver layer
+│   │   ├── __init__.py          # Device factory (mock/real routing)
+│   │   ├── servo_mock.py        # Servo mock (log-based)
+│   │   ├── servo_controller.py  # PCA9685 SG90 servo real driver
+│   │   ├── ir_sensor_mock.py    # IR sensor mock
+│   │   ├── ir_sensor.py         # GPIO IR obstacle sensor real driver
+│   │   ├── tof_sensor_mock.py   # ToF distance sensor mock
+│   │   ├── tof_sensor.py        # VL53L0X I2C real driver
+│   │   ├── led_mock.py          # RGB LED mock
+│   │   ├── led_controller.py    # GPIO PWM LED real driver
+│   │   ├── camera.py            # OV5647 camera (PID tracking + MediaPipe distraction)
+│   │   └── gpio_button.py       # GPIO physical button + mock
+│   ├── processes/               # Subprocess modules (reserved for M8)
+│   ├── utils/                   # Logger, retry utilities
+│   └── models/                  # Reserved for future local models
+├── system_prompts/              # Amiya character persona prompt
+├── tests/                       # Tests (28 M5 device tests + pipeline integration)
+├── docs/                        # Development documentation (Chinese)
+├── data/                        # Runtime data (config.json is gitignored)
+├── logs/                        # Log files (gitignored)
+├── requirements.txt             # Core Python dependencies
+├── requirements-dev.txt         # Dev dependencies (pytest, black)
+├── requirements-rpi.txt         # Raspberry Pi specific dependencies
+├── environment.yml              # Conda environment specification
+├── CLAUDE.md                    # Claude Code development guide
+└── .env.example                 # Environment variable template
 ```
 
-## 硬件清单（树莓派5部署）
+## Hardware (Raspberry Pi 5 Deployment)
 
-| 硬件 | 型号 | 数量 | 接口 |
-|------|------|------|------|
-| 主控 | 树莓派 5 (4/8GB) | 1 | — |
-| 舵机 | SG90 180° | 4 | PCA9685 I2C (0x40) |
-| 舵机驱动板 | PCA9685 16通道 | 1 | I2C |
-| 摄像头 | OV5647 | 1 | MIPI CSI |
-| 红外传感器 | IR 避障模块 | 1 | GPIO 17 |
-| TOF 传感器 | VL53L0X | 1 | I2C (0x29) |
-| RGB LED | 共阴/共阳 | 1 | GPIO 23/24/25 |
-| 按钮 | 轻触开关 | 1 | GPIO 27 |
-| 麦克风+扬声器 | USB 即插即用 | 1 | USB |
+| Component | Model | Qty | Interface |
+|-----------|-------|-----|-----------|
+| Main Board | Raspberry Pi 5 (4/8 GB) | 1 | — |
+| Servo | SG90 180° | 4 | PCA9685 I2C (0x40) |
+| Servo Driver | PCA9685 16-channel | 1 | I2C |
+| Camera | OV5647 | 1 | MIPI CSI |
+| IR Sensor | IR obstacle avoidance | 1 | GPIO 17 |
+| ToF Sensor | VL53L0X | 1 | I2C (0x29) |
+| RGB LED | Common cathode/anode | 1 | GPIO 23/24/25 |
+| Button | Tactile switch | 1 | GPIO 27 |
+| Microphone + Speaker | USB plug-and-play | 1 | USB |
 
-## 里程碑
+> **Raspberry Pi setup**: Install `requirements-rpi.txt` after enabling I2C/GPIO via `raspi-config`. See [docs/](docs/) for detailed deployment instructions.
 
-| 里程碑 | 内容 | 状态 |
-|--------|------|------|
-| M1 | 项目骨架：目录结构、依赖、日志系统 | ✅ 完成 |
-| M2-M4 | 音频管道 + LLM + ASR/TTS 语音交互全链路 | ✅ 完成 |
-| M5 | 函数调用 + Mock 外设 + 真实硬件驱动 | ✅ 完成 |
-| M6 | 上下文管理 + 记忆系统 | 🔜 下一步 |
-| M7 | 专注模式状态机 | 📋 计划中 |
-| M8 | 多进程框架 + 传感器进程 | 📋 计划中 |
-| 阶段二 | 树莓派硬件联调 | 📋 计划中 |
+## Roadmap
 
-## 开发协作
+| Milestone | Content | Status |
+|-----------|---------|--------|
+| M1 | Project skeleton: directory structure, dependencies, logging | ✅ Done |
+| M2-M4 | Audio pipeline + LLM + ASR/TTS full voice interaction chain | ✅ Done |
+| M5 | Function calling + mock peripherals + real hardware drivers | ✅ Done |
+| M6 | Context management + memory system | ✅ Done |
+| M7 | Focus mode state machine | ✅ Done |
+| M8 | Multi-process framework + sensor process | 🔄 In Progress |
+| Phase 2 | Raspberry Pi hardware integration | 📋 Planned |
 
-### Git 注意事项
+## Contributing
 
-- `.env` **绝对不能提交**（已加入 .gitignore）
-- `data/config.json` 已 gitignore（含用户本地配置）
-- API Key 仅存储在 `.env`，`config.json` 不会持久化密钥
-- 变更依赖后同步更新 `requirements*.txt`
+- **Branch model**: `main` (stable) → `develop` (integration) → `feature/xxx` (feature branches)
+- **Commit prefixes**: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`
+- `.env` and `data/config.json` are gitignored — never commit them
+- Update `requirements*.txt` when adding/removing dependencies
+- See [docs/协作者方法.md](docs/协作者方法.md) for the full collaboration guide (Chinese)
 
-### Claude Code 协作
+For Claude Code users: the project root `CLAUDE.md` provides full project context and development conventions.
 
-项目根目录的 `CLAUDE.md` 包含完整的项目上下文和开发约定，Claude Code 会自动加载。
+## Documentation
 
-## 许可证
+- [Development Specification](docs/桌面学习助手_开发规格文档.md) (Chinese) — Master spec v1.2
+- [Business Logic](docs/业务逻辑说明.md) (Chinese) — Implemented business logic reference
+- [Development Manual](docs/ClaudeCode_开发实操手册.md) (Chinese) — Step-by-step build guide
+- [Collaborator Guide](docs/协作者方法.md) (Chinese) — Onboarding & workflow
 
-参见 [LICENSE](LICENSE)
+## License
+
+MIT — see [LICENSE](LICENSE)
