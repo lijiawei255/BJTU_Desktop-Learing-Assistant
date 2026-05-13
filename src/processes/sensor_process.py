@@ -1,5 +1,8 @@
 """传感器子进程 — TOF距离传感器 + IR红外传感器
 
+Mock 模式：以 daemon 线程运行（共享 queue.Queue）
+真实模式：以独立 multiprocessing.Process 运行
+
 职责:
 - 周期性读取 TOF 距离传感器（坐姿检测）
 - 周期性读取 IR 红外传感器（手机放入/取出检测）
@@ -68,6 +71,12 @@ def sensor_process_main(
     last_distance: int = 0               # 上一次TOF距离
     last_posture_warning: bool = False   # 上一次坐姿警告状态
 
+    # ── 采样间隔配置 ──
+    tof_interval = config.get("posture.sample_interval_ms", 500) / 1000.0
+    ir_interval = config.get("ir_sensor.sample_interval_ms", 200) / 1000.0
+    last_tof_sample_time = 0.0
+    last_ir_sample_time = 0.0
+
     # TOF坐姿检测阈值
     tof_threshold = config.get("posture.tof_threshold_mm", 350)
     tof_recovery = config.get("posture.tof_recovery_mm", 450)
@@ -79,18 +88,25 @@ def sensor_process_main(
     normal_count = 0
     last_posture_alert_time = 0.0
 
+    # IR 去抖：连续 N 次状态一致才确认
+    ir_debounce_count = config.get("ir_sensor.debounce_count", 3)
+    ir_samples: list = []
+
     # 心跳计时
     heartbeat_interval = 1.0  # 每秒心跳
     last_heartbeat = time.monotonic()
 
     logger.info(
         f"传感器循环启动 (TOF阈值={tof_threshold}mm, 恢复={tof_recovery}mm, "
-        f"确认帧={confirm_count}, 冷却={posture_cooldown}s)"
+        f"确认帧={confirm_count}, 冷却={posture_cooldown}s, "
+        f"IR去抖={ir_debounce_count})"
     )
 
     # ── 主循环 ──
     while not shutdown_event.is_set():
         try:
+            now = time.monotonic()
+
             # ── 检查主进程命令（非阻塞） ──
             try:
                 if isinstance(from_main, th_queue.Queue) or not hasattr(from_main, 'empty'):
@@ -109,65 +125,75 @@ def sensor_process_main(
                     break
 
             # ── 读取 TOF 距离传感器 ──
-            distance = tof.read_distance()
+            if now - last_tof_sample_time >= tof_interval:
+                last_tof_sample_time = now
+                distance = tof.read_distance()
 
-            # 距离变化超过阈值才发送（减少噪声）
-            if abs(distance - last_distance) > 50:
-                last_distance = distance
-                to_main.put(IPCMessage(
-                    type=MessageType.DISTANCE_TOF,
-                    source="sensor",
-                    payload={"distance_mm": distance},
-                ))
-
-            # ── 坐姿检测（TOF距离 < 阈值 = 太近） ──
-            now = time.monotonic()
-            if distance < tof_threshold:
-                too_close_count += 1
-                normal_count = 0
-                # 连续N帧确认 + 冷却检查
-                if (too_close_count >= confirm_count and
-                    now - last_posture_alert_time > posture_cooldown):
-                    last_posture_alert_time = now
-                    last_posture_warning = True
+                # 距离变化超过阈值才发送（减少噪声）
+                if abs(distance - last_distance) > 50:
+                    last_distance = distance
                     to_main.put(IPCMessage(
-                        type=MessageType.POSTURE_WARNING,
+                        type=MessageType.DISTANCE_TOF,
                         source="sensor",
-                        payload={
-                            "distance_mm": distance,
-                            "threshold_mm": tof_threshold,
-                            "message": "坐姿过近",
-                        },
+                        payload={"distance_mm": distance},
                     ))
-                    logger.info(f"坐姿警告: {distance}mm < {tof_threshold}mm")
-            elif distance > tof_recovery:
-                normal_count += 1
-                too_close_count = 0
-                # 连续N帧确认恢复
-                if normal_count >= confirm_count and last_posture_warning:
-                    last_posture_warning = False
-                    to_main.put(IPCMessage(
-                        type=MessageType.POSTURE_WARNING,
-                        source="sensor",
-                        payload={
-                            "distance_mm": distance,
-                            "recovered": True,
-                            "message": "坐姿已恢复",
-                        },
-                    ))
-                    logger.info(f"坐姿恢复: {distance}mm > {tof_recovery}mm")
 
-            # ── 读取 IR 红外传感器（手机检测） ──
-            phone_present = ir_sensor.read()
-            if phone_present != last_phone_state:
-                last_phone_state = phone_present
-                msg_type = MessageType.PHONE_DETECTED if phone_present else MessageType.PHONE_REMOVED
-                to_main.put(IPCMessage(
-                    type=msg_type,
-                    source="sensor",
-                    payload={"timestamp": time.time()},
-                ))
-                logger.info(f"IR状态变化: phone={'存在' if phone_present else '不存在'}")
+                # ── 坐姿检测（TOF距离 < 阈值 = 太近） ──
+                if distance < tof_threshold:
+                    too_close_count += 1
+                    normal_count = 0
+                    # 连续N帧确认 + 冷却检查
+                    if (too_close_count >= confirm_count and
+                        now - last_posture_alert_time > posture_cooldown):
+                        last_posture_alert_time = now
+                        last_posture_warning = True
+                        to_main.put(IPCMessage(
+                            type=MessageType.POSTURE_WARNING,
+                            source="sensor",
+                            payload={
+                                "distance_mm": distance,
+                                "threshold_mm": tof_threshold,
+                                "message": "坐姿过近",
+                            },
+                        ))
+                        logger.info(f"坐姿警告: {distance}mm < {tof_threshold}mm")
+                elif distance > tof_recovery:
+                    normal_count += 1
+                    too_close_count = 0
+                    # 连续N帧确认恢复
+                    if normal_count >= confirm_count and last_posture_warning:
+                        last_posture_warning = False
+                        to_main.put(IPCMessage(
+                            type=MessageType.POSTURE_WARNING,
+                            source="sensor",
+                            payload={
+                                "distance_mm": distance,
+                                "recovered": True,
+                                "message": "坐姿已恢复",
+                            },
+                        ))
+                        logger.info(f"坐姿恢复: {distance}mm > {tof_recovery}mm")
+
+            # ── 读取 IR 红外传感器（手机检测，带去抖） ──
+            if now - last_ir_sample_time >= ir_interval:
+                last_ir_sample_time = now
+                phone_present = ir_sensor.read()
+                ir_samples.append(phone_present)
+                if len(ir_samples) > ir_debounce_count:
+                    ir_samples.pop(0)
+
+                # 去抖：连续 N 次状态一致才确认变化
+                if len(ir_samples) >= ir_debounce_count:
+                    all_same = all(s == ir_samples[0] for s in ir_samples)
+                    if all_same and phone_present != last_phone_state:
+                        last_phone_state = phone_present
+                        msg_type = MessageType.PHONE_DETECTED if phone_present else MessageType.PHONE_REMOVED
+                        to_main.put(IPCMessage(
+                            type=msg_type,
+                            source="sensor",
+                            payload={"timestamp": time.time()},
+                        ))
+                        logger.info(f"IR状态变化: phone={'存在' if phone_present else '不存在'}")
 
             # ── 心跳 ──
             if now - last_heartbeat > heartbeat_interval:

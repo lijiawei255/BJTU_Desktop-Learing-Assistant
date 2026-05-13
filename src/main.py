@@ -1,8 +1,9 @@
-"""Amiya 桌面学习助手 - 主程序入口"""
+"""Amiya 桌面学习助手 - 主程序入口 (M8: 多进程架构 + 消息总线)"""
 
 import json
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from src.config import config
 from src.dialog_manager import DialogManager
 from src.llm_client import AVAILABLE_TOOLS, LLMClient
 from src.memory_manager import MemoryManager
+from src.message_bus import MessageBus, IPCMessage, MessageType
 from src.sentence_splitter import SentenceSplitter
 from src.text_sanitizer import TextSanitizer
 from src.tool_executor import ToolExecutor
@@ -28,13 +30,18 @@ logger = setup_logger("main")
 
 
 class AmiyaSystem:
-    """系统主类"""
+    """系统主类 (M8: 集成消息总线 + 传感器子进程)"""
 
     def __init__(self):
         self._running = True
         self._consecutive_errors = 0
         self._degraded_until = 0.0
         signal.signal(signal.SIGINT, self._handle_signal)
+
+        # M8: 消息总线 + 关闭信号
+        self.bus = MessageBus()
+        self.shutdown_event = threading.Event()
+        self._sensor_thread: threading.Thread | None = None
 
         logger.info("=" * 50)
         logger.info("Amiya Desktop Learning Assistant Starting...")
@@ -47,9 +54,69 @@ class AmiyaSystem:
         logger.info("Received stop signal.")
         self._running = False
 
+    def _start_sensor_process(self):
+        """M8: 启动传感器子进程/线程"""
+        from src.processes.sensor_process import sensor_process_loop
+
+        if config.is_mock:
+            # Mock 模式：线程运行
+            self._sensor_thread = threading.Thread(
+                target=sensor_process_loop,
+                args=(self.bus, self.shutdown_event, 0.2),
+                daemon=True,
+                name="sensor-proc",
+            )
+            self._sensor_thread.start()
+            logger.info("Sensor thread started (mock mode)")
+        else:
+            # 真实多进程模式
+            import multiprocessing
+            self._sensor_process = multiprocessing.Process(
+                target=sensor_process_loop,
+                args=(self.bus, self.shutdown_event, 0.2),
+                name="sensor-proc",
+                daemon=True,
+            )
+            self._sensor_process.start()
+            logger.info("Sensor subprocess started (real mode)")
+
+    def _stop_sensor_process(self):
+        """M8: 停止传感器子进程"""
+        self.shutdown_event.set()
+        if self._sensor_thread and self._sensor_thread.is_alive():
+            self._sensor_thread.join(timeout=2.0)
+            logger.info("Sensor thread stopped")
+
+    def _check_sensor_messages(self, tool_executor: ToolExecutor):
+        """M8: 检查传感器消息并分发到状态机"""
+        msg = self.bus.get_from_main(timeout=0)
+        while msg is not None:
+            if msg.type == MessageType.PHONE_DETECTED:
+                logger.info(f"[Sensor] Phone detected: {msg.payload}")
+                if tool_executor.state_ctrl.state.name == "WAITING_PHONE":
+                    # 等待放手机状态 → 触发关盖
+                    tool_executor.state_ctrl.phone_inserted()
+                elif tool_executor.state_ctrl.state.name == "PAUSED":
+                    # 暂停中放回手机 → 恢复
+                    tool_executor.state_ctrl.phone_inserted()
+
+            elif msg.type == MessageType.PHONE_REMOVED:
+                logger.info(f"[Sensor] Phone removed: {msg.payload}")
+                if tool_executor.state_ctrl.state.name == "FOCUSING":
+                    tool_executor.state_ctrl.phone_removed()
+
+            elif msg.type == MessageType.DISTANCE_TOF:
+                distance = msg.payload.get("distance_mm", 0)
+                logger.debug(f"[Sensor] TOF distance: {distance}mm")
+
+            elif msg.type == MessageType.HEARTBEAT:
+                logger.debug(f"[Sensor] Heartbeat from {msg.source}")
+
+            msg = self.bus.get_from_main(timeout=0)
+
     def _run_voice_loop(self):
-        """多轮语音对话 — 唤醒后支持连续对话+打断"""
-        logger.info("\n[Milestone 5] Multi-turn Voice Dialogue\n")
+        """多轮语音对话 — 唤醒后支持连续对话+打断 (M8: 传感器消息处理)"""
+        logger.info("\n[Milestone 7+8] Multi-turn Voice Dialogue with State Machine + Sensor Bus\n")
 
         # 初始化所有组件
         try:
@@ -71,11 +138,14 @@ class AmiyaSystem:
         dialog._memory = memory
         tool_executor = ToolExecutor()
 
+        # M8: 启动传感器进程
+        self._start_sensor_process()
+
         CONVERSATION_TIMEOUT = 20.0
         SILENCE_TURNS_LIMIT = 3
         MAX_ERRORS = config.get("error_handling.max_consecutive_errors", 5)
         ERROR_COOLDOWN = config.get("error_handling.error_cooldown_seconds", 5)
-        POST_TTS_SETTLE = 0.3  # TTS播放后短暂静置，避免残余语音被误捕获
+        POST_TTS_SETTLE = 0.3
 
         FALLBACK_MESSAGES = {
             "asr": "好像没有听清你说什么呢。有需要的时候，再呼唤阿米娅，我就会醒来。",
@@ -84,7 +154,7 @@ class AmiyaSystem:
 
         print("\n" + "=" * 50)
         print("  阿米娅 (Amiya) 桌面学习助手")
-        print("  多轮语音交互")
+        print("  多轮语音交互 (M8: 状态机 + 传感器总线)")
         print("=" * 50)
         print()
 
@@ -94,6 +164,8 @@ class AmiyaSystem:
                 logger.info("State: IDLE — Waiting for wake word...")
                 detected = wake.listen_for_wake_word(audio_handler, vad, asr)
                 if not detected or not self._running:
+                    # M8: 空闲时也检查传感器消息
+                    self._check_sensor_messages(tool_executor)
                     continue
 
                 wake.mark_awake()
@@ -109,6 +181,9 @@ class AmiyaSystem:
 
                 # ━━ 多轮对话循环（无需重复唤醒） ━━
                 while self._running:
+                    # M8: 检查传感器消息
+                    self._check_sensor_messages(tool_executor)
+
                     # 检查降级模式冷却
                     if self._degraded_until > 0:
                         if time.time() < self._degraded_until:
@@ -119,7 +194,7 @@ class AmiyaSystem:
                             self._degraded_until = 0.0
                             self._consecutive_errors = 0
 
-                    # 检查专注计时器是否到期
+                    # M7: 检查专注计时器是否到期（StateController）
                     if tool_executor.timer_expired:
                         logger.info("Focus timer expired — auto-ending focus mode")
                         exec_result = tool_executor.execute(
@@ -196,7 +271,6 @@ class AmiyaSystem:
 
                     tts.start_playback_worker()
 
-                    # LLM响应中检测 [SKIP] 标记（不打断流式，等完整响应后判断）
                     reply = ""
                     skip_detected = False
 
@@ -210,7 +284,6 @@ class AmiyaSystem:
                     def on_chunk(delta: str):
                         nonlocal reply, skip_detected
                         reply += delta
-                        # 检测 [SKIP] 标记（累积到足够字符后判断）
                         if not skip_detected and "[SKIP]" in reply:
                             skip_detected = True
                             tts.stop_playback()
@@ -245,7 +318,8 @@ class AmiyaSystem:
                                 tts.wait_for_queue()
                                 tts.stop_playback()
                             print(f"[阿米娅] {farewell}")
-                            break  # 退出对话循环，回到 IDLE
+                            break
+
                     else:
                         # reply 是 dict（含 tool_calls），执行工具并反馈给LLM
                         tool_calls = reply.get("tool_calls", [])
@@ -269,7 +343,6 @@ class AmiyaSystem:
                             logger.info(f"Tool {fn_name}({fn_args}) -> {exec_result}")
                             tool_results.append(exec_result)
                             print(f"[阿米娅] (执行操作: {exec_result['result']})")
-                            # 工具执行后立即播放语音反馈
                             if exec_result.get("success"):
                                 tts.enqueue_sentence(exec_result["result"])
                             # 昵称变更同步到长期记忆
@@ -284,7 +357,6 @@ class AmiyaSystem:
                         )
 
                         # 再次请求LLM，基于工具结果生成自然语言回复
-                        # 重置流式状态（reply 此时是 dict，on_chunk 需要 str）
                         skip_detected = False
                         reply = ""
                         system = llm.build_system_prompt(
@@ -330,7 +402,6 @@ class AmiyaSystem:
                                 )
                                 break
                     else:
-                        # dict: tool_calls 响应，暂存文本部分供后续里程碑处理
                         text = reply.get("text", "") if isinstance(reply, dict) else ""
                         if text:
                             dialog.add_assistant_message(text)
@@ -346,10 +417,8 @@ class AmiyaSystem:
                         f"history {len(messages)} msgs, errors={self._consecutive_errors}"
                     )
 
-                    # TTS后短暂静置，避免残余声音被下次录音误捕获
                     time.sleep(POST_TTS_SETTLE)
-
-                    print()  # 空行分隔下一轮
+                    print()
 
                 # ━━ 会话结束：保存到记忆 ━━
                 history = dialog.get_history()
@@ -386,8 +455,10 @@ class AmiyaSystem:
             self.shutdown()
 
     def shutdown(self):
-        """优雅关闭"""
+        """M8: 优雅关闭 — 停止子进程 + 清理资源"""
         logger.info("Shutting down...")
+        self._stop_sensor_process()
+        self.bus.drain_main()
         logger.info("Goodbye!")
 
 

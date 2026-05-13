@@ -34,7 +34,8 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 - **Entry point**: `src/main.py` → `AmiyaSystem.run()` → `_run_voice_loop()` (multi-turn voice conversation loop)
 - **Config**: `src/config.py` global `config` singleton, dot-path access `config.get("key.path")`
 - **Devices**: `src/devices/__init__.py` factory functions route to Mock (PC) or Real (RPi) via `config.is_mock`
-- **Focus mode**: `src/tool_executor.py` — `ToolExecutor` + `FocusTimer` manage full lifecycle
+- **Focus mode**: `src/tool_executor.py` — `ToolExecutor` manages full lifecycle; `src/state_controller.py` — `StateController` + `FocusState` state machine (M7)
+- **IPC**: `src/message_bus.py` — `MessageBus` + `IPCMessage` cross-process communication (M8)
 - **Camera**: `src/devices/camera.py` — PID face tracking + auto-scan + MediaPipe distraction detection
 
 ---
@@ -106,7 +107,7 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 
 ---
 
-## Current Status (M5 Complete)
+## Current Status (M7+M8 Complete)
 
 | Milestone | Status |
 |-----------|--------|
@@ -115,17 +116,18 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 | M5: Function calling + mock devices | ✅ Done |
 | M6: Context management + memory | ✅ Done |
 | M7: Focus state machine | ✅ Done |
-| M8: Multiprocess architecture | 🔄 In Progress |
+| M8: Multiprocess architecture | ✅ Done |
 
 ## Key Files for M6+ Development
 
 - `src/memory_manager.py` — Cross-session memory, context compression, nickname/preferences
-- `src/state_controller.py` — Focus state machine (IDLE → WAITING_PHONE → BOX_CLOSED → FOCUSING ↔ PAUSED → COMPLETED)
-- `src/message_bus.py` — IPC message bus for multiprocess communication
+- `src/tool_executor.py` — `ToolExecutor` manages focus lifecycle (delegates state to `StateController`)
+- `src/state_controller.py` — `FocusState` enum + `StateController` formal state machine (M7)
+- `src/message_bus.py` — `MessageBus` + `IPCMessage` cross-process communication (M8)
 - `src/processes/device_process.py` — Peripheral control subprocess (servo + LED)
-- `src/processes/sensor_process.py` — Sensor subprocess (TOF + IR)
+- `src/processes/sensor_process.py` — Sensor subprocess/thread (TOF + IR) via message bus (M8)
 - `src/processes/vision_process.py` — Vision subprocess (camera tracking + distraction)
-- `src/tool_executor.py` — Focus lifecycle (delegates to StateController)
+- `src/dialog_manager.py` — Message history
 - `src/devices/__init__.py` — Device factory (add new devices here)
 - `src/devices/camera.py` — PID tracker + MediaPipe distraction detector (`PIDController` 在此文件中，非独立 `utils/pid.py`)
 - `src/config.py` — All config keys defined here
