@@ -36,7 +36,7 @@ logger = setup_logger("message_bus")
 # ═══════════════════════════════════════════════════════════════
 
 class MessageType(Enum):
-    """IPC 消息类型 — 覆盖视觉、传感器、外设、系统四大类"""
+    """IPC 消息类型 — 覆盖视觉、传感器、外设、音频、系统五大类"""
 
     # ── 视觉类（VisionProcess -> MainProcess） ──
     FACE_DETECTED = "face_detected"        # 检测到人脸
@@ -53,8 +53,15 @@ class MessageType(Enum):
     # ── 外设控制类（MainProcess -> DeviceProcess） ──
     SERVO_COMMAND = "servo_command"        # 舵机控制命令
     LED_COMMAND = "led_command"            # LED控制命令
+    FOCUS_COMMAND = "focus_command"        # 专注模式控制命令
+    LED_STATE = "led_state"                # LED状态变更
     BOX_OPEN = "box_open"                  # 打开手机盒
     BOX_CLOSE = "box_close"                # 关闭手机盒
+
+    # ── 音频/对话类（MainProcess <-> 子进程） ──
+    USER_SPEECH = "user_speech"            # 用户语音输入
+    TTS_REQUEST = "tts_request"            # TTS 合成请求
+    TTS_COMPLETE = "tts_complete"          # TTS 合成完成
 
     # ── 系统类（双向） ──
     SYSTEM_EVENT = "system_event"          # 系统事件（状态变化通知）
