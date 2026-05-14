@@ -4,7 +4,7 @@
 
 Amiya is an AI voice companion device for students, built around LLM voice interaction with integrated phone storage management, posture monitoring, and distraction tracking.
 
-> **Status**: Milestone 5 complete — Function calling + Mock peripherals + Real hardware drivers. Runs out of the box on PC in mock mode (no hardware required). Target deployment: Raspberry Pi 5.
+> **Status**: Milestone 9 complete — Voice interaction optimizations (shorter wait, wake-word-gated barge-in, fuzzy wake word detection). Runs out of the box on PC in mock mode (no hardware required). Target deployment: Raspberry Pi 5.
 
 ## Features
 
@@ -226,7 +226,8 @@ To test with a real microphone on PC, edit `data/config.json` and set `"audio": 
 | M5 | Function calling + mock peripherals + real hardware drivers | ✅ Done |
 | M6 | Context management + memory system | ✅ Done |
 | M7 | Focus mode state machine | ✅ Done |
-| M8 | Multi-process framework + sensor process | 🔄 In Progress |
+| M8 | Multi-process framework + sensor process | ✅ Done |
+| M9 | Voice interaction: shorter timeout, wake-word barge-in, fuzzy wake word | ✅ Done |
 | Phase 2 | Raspberry Pi hardware integration | 📋 Planned |
 
 ## Contributing

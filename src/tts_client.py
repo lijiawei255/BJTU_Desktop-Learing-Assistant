@@ -61,6 +61,13 @@ class TTSClient:
         """最近一次播放是否被用户语音打断。"""
         return self._barge_triggered
 
+    @property
+    def is_playing(self) -> bool:
+        """是否正在播放（队列非空或worker活跃）。"""
+        return self._playback_active and (
+            not self._sentence_queue.empty() or not self._idle_event.is_set()
+        )
+
     # ── 后台队列播放 API ──────────────────────────────────────────
 
     def start_playback_worker(self):
