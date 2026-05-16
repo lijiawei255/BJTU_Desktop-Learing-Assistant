@@ -107,7 +107,7 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 
 ---
 
-## Current Status (M7+M8 Complete)
+## Current Status (M7+M8+M9 Complete)
 
 | Milestone | Status |
 |-----------|--------|
@@ -117,6 +117,7 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 | M6: Context management + memory | ✅ Done |
 | M7: Focus state machine | ✅ Done |
 | M8: Multiprocess architecture | ✅ Done |
+| M9: Voice interaction optimizations | ✅ Done |
 
 ## Key Files for M6+ Development
 
@@ -132,7 +133,8 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 - `src/devices/camera.py` — PID tracker + MediaPipe distraction detector (`PIDController` 在此文件中，非独立 `utils/pid.py`)
 - `src/config.py` — All config keys defined here
 - `src/llm_client.py` — `AVAILABLE_TOOLS` + `stream_chat` (add new tools here)
-- `docs/ClaudeCode_开发实操手册.md` — Full development manual with M6-M8 specs
+- `src/wake_word_detector.py` — Wake word detection with fuzzy matching + barge-in gating (M9)
+- `docs/ClaudeCode_开发实操手册.md` — Full development manual with M6-M9 specs
 
 ## Mock Mode
 
