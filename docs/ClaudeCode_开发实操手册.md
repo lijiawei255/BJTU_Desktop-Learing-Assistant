@@ -229,10 +229,26 @@ class Config:
                 file_config = json.load(f)
                 self._deep_update(config, file_config)
 
-        # 环境变量覆盖（仅限阿里云百炼）
+        # 环境变量覆盖（API密钥、Mock开关、音频设备、日志级别）
         if os.getenv("ALIBABA_API_KEY"):
             config.setdefault("api_keys", {})
             config["api_keys"]["alibaba"] = os.getenv("ALIBABA_API_KEY")
+
+        if os.getenv("ENABLE_MOCK") is not None:
+            config.setdefault("mock", {})
+            config["mock"]["enabled"] = os.getenv("ENABLE_MOCK").lower() in ("true", "1", "yes")
+
+        if os.getenv("AUDIO_INPUT_DEVICE_INDEX") is not None:
+            config.setdefault("audio", {})
+            config["audio"]["input_device_index"] = int(os.getenv("AUDIO_INPUT_DEVICE_INDEX"))
+
+        if os.getenv("AUDIO_OUTPUT_DEVICE_INDEX") is not None:
+            config.setdefault("audio", {})
+            config["audio"]["output_device_index"] = int(os.getenv("AUDIO_OUTPUT_DEVICE_INDEX"))
+
+        if os.getenv("LOG_LEVEL") is not None:
+            config.setdefault("system", {})
+            config["system"]["debug_mode"] = os.getenv("LOG_LEVEL").upper() == "DEBUG"
 
         return config
 
@@ -2292,7 +2308,7 @@ Session saved.
 ### 目标
 实现完整的专注模式状态机（IDLE → WAITING_PHONE → BOX_CLOSED → FOCUSING ↔ PAUSED → COMPLETED）。
 
-> **⚠️ M7 里程碑代码清单仅作为规划参考。`StateController` 和 `FocusState` 枚举尚未实现。当前专注模式状态管理使用 `src/tool_executor.py` 中的布尔标志 + `FocusTimer` 守护线程完成。**
+> **M7 已完成**。`StateController`（`src/state_controller.py`）和 `FocusState` 枚举已实现并集成到 `ToolExecutor`。以下代码为规划时的设计参考。
 
 ### 7.1 状态机实现
 
@@ -2541,7 +2557,7 @@ python -m src.main
 ### 目标
 将视觉、传感器、外设控制拆分为独立子进程，通过 Queue 通信。
 
-> **⚠️ M8 里程碑代码清单仅作为规划参考。多进程架构和消息总线尚未实现。当前所有模块在单进程中运行。**
+> **M8 已完成**。`MessageBus`（`src/message_bus.py`）和多进程架构已实现。`sensor_process_loop()` 提供了基于总线的传感器轮询封装。以下代码为规划时的设计参考。
 
 ### 8.1 消息总线
 
@@ -2614,11 +2630,15 @@ class MessageBus:
         for queue in [self.to_vision, self.to_sensor, self.to_device]:
             queue.put(msg)
 
-    def get_from_main(self, timeout: float = 0.01) -> Optional[IPCMessage]:
-        """主进程读取子进程消息（非阻塞）"""
-        if not self.to_main.empty():
-            return self.to_main.get()
-        return None
+    def receive(self, timeout: float = 0.01) -> Optional[IPCMessage]:
+        """主进程从 to_main 队列接收消息（非阻塞）"""
+        try:
+            msg = self.to_main.get(timeout=timeout)
+            if isinstance(msg, dict):
+                msg = IPCMessage.from_dict(msg)
+            return msg
+        except Exception:
+            return None
 ```
 
 ### 8.2 子进程模板
@@ -2686,6 +2706,8 @@ def sensor_process_main(
 
 （视觉子进程和外设子进程结构类似，里程碑8重点验证通信机制）
 
+> **更新**：新增 `sensor_process_loop(bus, shutdown_event, interval)` 封装函数（位于 `sensor_process.py` 末尾），直接使用 `MessageBus` 对象（而非原始 `Queue`）。`main.py` 通过此函数启动传感器进程/线程。
+
 ### 8.3 主进程集成
 
 在 `src/main.py` 的最终版本中集成多进程：
@@ -2718,7 +2740,7 @@ from src.processes.sensor_process import sensor_process_main
 
     def check_messages(self):
         """检查子进程消息"""
-        msg = self.bus.get_from_main(timeout=0)
+        msg = self.bus.receive(timeout=0)
         while msg:
             if msg.type == MessageType.DISTANCE_TOF:
                 logger.debug(f"TOF: {msg.payload['distance_mm']}mm")
@@ -2728,7 +2750,7 @@ from src.processes.sensor_process import sensor_process_main
             elif msg.type == MessageType.PHONE_REMOVED:
                 logger.info("Phone removed detected")
                 self.dialog.tools.state.phone_removed()
-            msg = self.bus.get_from_main(timeout=0)
+            msg = self.bus.receive(timeout=0)
 ```
 
 ### 验证命令
@@ -2783,7 +2805,7 @@ conda activate amiya
 # 3. 安装依赖（全部中国大陆可用）
 pip install webrtcvad pyaudio numpy opencv-python
 dashscope pydantic python-dotenv requests
-gpiozero pigpio smbus2
+gpiozero picamera2
 
 # 4. 启用I2C和GPIO
 sudo raspi-config  # 启用 I2C, SPI, Camera

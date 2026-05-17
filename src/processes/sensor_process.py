@@ -219,3 +219,17 @@ def sensor_process_main(
     except Exception:
         pass
     logger.info("传感器子进程已停止")
+
+
+def sensor_process_loop(bus, shutdown_event, interval: float = 0.2):
+    """
+    MessageBus 包装函数 — main.py 适配层
+
+    从 MessageBus 解包队列并委托给 sensor_process_main。
+    兼容 mock 线程模式和真实多进程模式。
+    """
+    sensor_process_main(
+        to_main=bus.to_main,
+        from_main=bus.to_sensor,
+        shutdown_event=shutdown_event,
+    )

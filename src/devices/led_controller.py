@@ -41,11 +41,23 @@ class LEDController:
         logger.info(f"[LED] Color={color} ({rgb}), Pattern={pattern}")
 
         if pattern == "off":
-            self._led.color = (0, 0, 0)
-        else:
-            self._led.color = rgb
-            if pattern == "blink":
-                self._led.blink(on_time=0.5, off_time=0.5)
+            self._led.off()
+            return
+
+        self._led.color = rgb
+
+        if pattern == "blink":
+            for device in self._led:
+                try:
+                    device.blink(on_time=0.5, off_time=0.5)
+                except AttributeError:
+                    pass
+        elif pattern == "breath":
+            for device in self._led:
+                try:
+                    device.pulse(fade_in_time=2, fade_out_time=2)
+                except AttributeError:
+                    pass
 
     def off(self):
         self._led.color = (0, 0, 0)

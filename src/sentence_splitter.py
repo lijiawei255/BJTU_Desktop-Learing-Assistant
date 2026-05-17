@@ -6,7 +6,7 @@ from typing import Callable
 class SentenceSplitter:
     """积累流式LLM token，检测句子边界时回调。"""
 
-    SENTENCE_ENDINGS = {"。", "！", "？", ".", "!", "?", "\n", "；", ";"}
+    SENTENCE_ENDINGS = {"。", "！", "？", ".", "!", "?", "\n", "；", ";", "…"}
 
     def __init__(self, callback: Callable[[str], None], min_sentence_len: int = 2):
         self._buffer = ""

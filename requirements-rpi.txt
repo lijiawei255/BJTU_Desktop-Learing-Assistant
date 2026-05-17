@@ -6,15 +6,8 @@
 # 这些包依赖树莓派的 GPIO/I2C 硬件接口，无法在 Windows PC 上安装。
 # 仅在阶段二（树莓派集成调试）时使用。
 
-# 树莓派 GPIO 控制
+# 树莓派 GPIO 控制（RPi 5 自动使用 lgpio 后端）
 gpiozero>=2.0.0
-pigpio>=1.78
-
-# I2C 总线通信（TOF 传感器等）
-smbus2>=0.4.0
-
-# 音频重采样（CosyVoice 24kHz → 16kHz）
-# librosa        # 可选，取消注释以启用高质量重采样
 
 # PCA9685 16通道PWM舵机驱动板
 adafruit-circuitpython-servokit>=1.3.0
@@ -25,5 +18,11 @@ adafruit-circuitpython-vl53l0x>=1.1.0
 # Adafruit Blinka (CircuitPython硬件抽象层，board/busio依赖)
 Adafruit-Blinka>=8.0.0
 
+# RPi 5 摄像头（RPi OS Bookworm 也可用 sudo apt install python3-picamera2）
+picamera2
+
 # MediaPipe — 面部网格检测（闭眼/转头走神检测）
-mediapipe>=0.10.0
+# ⚠ RPi 5 aarch64 无预编译 wheel，需手动安装社区 fork 或从源码编译：
+#   pip install mediapipe-rpi4
+# 或者暂时禁用视觉功能（DistractionDetector 会在 import 失败时自动降级）
+# mediapipe>=0.10.0

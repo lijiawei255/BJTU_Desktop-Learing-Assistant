@@ -181,10 +181,36 @@ class Config:
                 file_config = json.load(f)
                 self._deep_update(config, file_config)
 
-        # 环境变量覆盖（仅限阿里云百炼）
+        # 环境变量覆盖
         if os.getenv("ALIBABA_API_KEY"):
             config.setdefault("api_keys", {})
             config["api_keys"]["alibaba"] = os.getenv("ALIBABA_API_KEY")
+
+        # ENABLE_MOCK 环境变量覆盖（优先级高于 config.json）
+        if os.getenv("ENABLE_MOCK") is not None:
+            mock_enabled = os.getenv("ENABLE_MOCK").lower() in ("true", "1", "yes")
+            config.setdefault("mock", {})
+            config["mock"]["enabled"] = mock_enabled
+
+        # 音频设备索引（用于 RPi USB 声卡选择）
+        if os.getenv("AUDIO_INPUT_DEVICE_INDEX") is not None:
+            try:
+                config.setdefault("audio", {})
+                config["audio"]["input_device_index"] = int(os.getenv("AUDIO_INPUT_DEVICE_INDEX"))
+            except ValueError:
+                pass
+
+        if os.getenv("AUDIO_OUTPUT_DEVICE_INDEX") is not None:
+            try:
+                config.setdefault("audio", {})
+                config["audio"]["output_device_index"] = int(os.getenv("AUDIO_OUTPUT_DEVICE_INDEX"))
+            except ValueError:
+                pass
+
+        # 日志级别
+        if os.getenv("LOG_LEVEL") is not None:
+            config.setdefault("system", {})
+            config["system"]["debug_mode"] = os.getenv("LOG_LEVEL").upper() == "DEBUG"
 
         return config
 

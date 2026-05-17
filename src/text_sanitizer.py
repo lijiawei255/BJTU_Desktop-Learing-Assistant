@@ -13,6 +13,7 @@ class TextSanitizer:
         (r"【[^】]+】", ""),  # 【状态标记】
         (r"\([^)]*(?:action|gesture|sigh|laugh|nod|smile|shake)[^)]*\)", "", re.IGNORECASE),  # (英文动作)
         (r"～+", "~"),  # 波浪线归一化（TTS可读）
+        (r"…+", "。"),  # 省略号替换为句号（避免TTS读成"略"）
         (r"#\w+", ""),  # 话题标签
         (r"[\U0001F300-\U0001F9FF]", ""),  # emoji
         (r"\n{2,}", "\n"),  # 多余空行压缩

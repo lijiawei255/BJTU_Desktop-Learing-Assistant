@@ -26,3 +26,11 @@ class TOFSensor:
         except Exception as e:
             logger.warning(f"TOF read error: {e}")
             return 8190
+
+    def close(self):
+        """释放I2C资源"""
+        try:
+            if hasattr(self._vl53, 'deinit'):
+                self._vl53.deinit()
+        except Exception:
+            pass

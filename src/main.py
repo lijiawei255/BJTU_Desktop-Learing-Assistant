@@ -103,7 +103,7 @@ class AmiyaSystem:
 
     def _check_sensor_messages(self, tool_executor: ToolExecutor):
         """M8: 检查传感器消息并分发到状态机"""
-        msg = self.bus.get_from_main(timeout=0)
+        msg = self.bus.receive(timeout=0)
         while msg is not None:
             if msg.type == MessageType.PHONE_DETECTED:
                 logger.info(f"[Sensor] Phone detected: {msg.payload}")
@@ -126,7 +126,7 @@ class AmiyaSystem:
             elif msg.type == MessageType.HEARTBEAT:
                 logger.debug(f"[Sensor] Heartbeat from {msg.source}")
 
-            msg = self.bus.get_from_main(timeout=0)
+            msg = self.bus.receive(timeout=0)
 
     def _run_voice_loop(self):
         """多轮语音对话 — 唤醒后支持连续对话+打断 (M8: 传感器消息处理)"""
@@ -140,6 +140,7 @@ class AmiyaSystem:
             asr = ASRClient()
             llm = LLMClient()
             tts = TTSClient()
+            tts.set_shared_pa(audio_handler._pa)
         except ValueError as e:
             logger.error(f"Initialization failed: {e}")
             logger.error("Please check your .env file and API key configuration.")
@@ -156,8 +157,7 @@ class AmiyaSystem:
         self._start_sensor_process()
 
         CONVERSATION_TIMEOUT = config.get("audio.conversation_timeout_seconds", 10)
-        SILENCE_TURNS_LIMIT = 3
-        BARGE_IN_ENABLED = config.get("audio.barge_in_enabled", True)
+        SILENCE_TURNS_LIMIT = 2
         MAX_ERRORS = config.get("error_handling.max_consecutive_errors", 5)
         ERROR_COOLDOWN = config.get("error_handling.error_cooldown_seconds", 5)
         POST_TTS_SETTLE = 0.3
@@ -173,11 +173,16 @@ class AmiyaSystem:
         print("=" * 50)
         print()
 
+        # 启动欢迎语音提示
+        logger.info("Playing welcome greeting...")
+        tts.speak("欢迎使用阿米娅桌面学习助手。请说阿米娅唤醒我，开始交互。")
+        time.sleep(0.3)  # 等待ALSA释放音频设备
+
         while self._running:
             try:
                 # ━━ IDLE: 等待唤醒词 ━━
                 logger.info("State: IDLE — Waiting for wake word...")
-                detected = wake.listen_for_wake_word(audio_handler, vad, asr)
+                detected = wake.listen_for_wake_word(audio_handler, vad, asr, pa_instance=audio_handler._pa)
                 if not detected or not self._running:
                     # M8: 空闲时也检查传感器消息
                     self._check_sensor_messages(tool_executor)
@@ -193,7 +198,6 @@ class AmiyaSystem:
 
                 last_activity = time.time()
                 empty_turns = 0
-                barge_in_text: str | None = None
 
                 # ━━ 多轮对话循环（无需重复唤醒） ━━
                 while self._running:
@@ -226,52 +230,49 @@ class AmiyaSystem:
                         tts.speak("有需要的时候，再呼唤阿米娅，我就会醒来哦。")
                         break
 
-                    # 录音采集（支持打断文本跳过录音环节）
-                    if barge_in_text:
-                        user_text = _strip_wake_prefix(barge_in_text, wake)
-                        barge_in_text = None
-                        empty_turns = 0
-                        print(f"\n[打断] 检测到唤醒词，处理新指令...")
-                    else:
-                        logger.info("State: LISTENING")
-                        audio_data = audio_handler.record_until_silence(vad)
-                        if not audio_data:
-                            empty_turns += 1
-                            if empty_turns >= SILENCE_TURNS_LIMIT:
-                                logger.info("Too many silent turns, returning to IDLE.")
-                                tts.speak(
-                                    "好像没有听到你说什么哦。有需要的时候，再呼唤阿米娅，我就会醒来。"
-                                )
-                                break
-                            continue
-
-                        empty_turns = 0
-
-                        # 保存调试录音
-                        audio_handler.save_wav(audio_data, "logs/test_recording.wav")
-
-                        # ASR语音识别
-                        logger.info("State: PROCESSING — ASR")
-                        user_text = asr.recognize_once(audio_data)
-                        if not user_text:
-                            self._consecutive_errors += 1
-                            logger.info(
-                                f"ASR returned empty. Errors: {self._consecutive_errors}/{MAX_ERRORS}"
+                    # 录音采集
+                    logger.info("State: LISTENING")
+                    audio_data = audio_handler.record_until_silence(vad, max_seconds=8)
+                    if not audio_data:
+                        empty_turns += 1
+                        last_activity = time.time()
+                        if empty_turns >= SILENCE_TURNS_LIMIT:
+                            logger.info("Too many silent turns, returning to IDLE.")
+                            tts.speak(
+                                "好像没有听到你说什么哦。有需要的时候，再呼唤阿米娅，我就会醒来。"
                             )
-                            if self._consecutive_errors >= MAX_ERRORS:
-                                tts.speak(FALLBACK_MESSAGES["asr"])
-                                self._degraded_until = time.time() + ERROR_COOLDOWN
-                                logger.warning(
-                                    "Entering degraded mode due to ASR failures."
-                                )
-                                break
-                            continue
+                            break
+                        continue
 
-                        # 快速启发式过滤：纯噪音/过短文本
-                        stripped = user_text.strip()
-                        if len(stripped) < 2:
-                            logger.info(f"Filtered (too short): '{stripped}'")
-                            continue
+                    empty_turns = 0
+
+                    # 保存调试录音
+                    audio_handler.save_wav(audio_data, "logs/test_recording.wav")
+
+                    # ASR语音识别
+                    logger.info("State: PROCESSING — ASR")
+                    user_text = asr.recognize_once(audio_data)
+                    if not user_text:
+                        self._consecutive_errors += 1
+                        last_activity = time.time()
+                        logger.info(
+                            f"ASR returned empty. Errors: {self._consecutive_errors}/{MAX_ERRORS}"
+                        )
+                        if self._consecutive_errors >= MAX_ERRORS:
+                            tts.speak(FALLBACK_MESSAGES["asr"])
+                            self._degraded_until = time.time() + ERROR_COOLDOWN
+                            logger.warning(
+                                "Entering degraded mode due to ASR failures."
+                            )
+                            break
+                        continue
+
+                    # 快速启发式过滤：纯噪音/过短文本
+                    stripped = user_text.strip()
+                    if len(stripped) < 2:
+                        last_activity = time.time()
+                        logger.info(f"Filtered (too short): '{stripped}'")
+                        continue
 
                     last_activity = time.time()
                     print(f"\n[用户] {user_text}")
@@ -279,7 +280,7 @@ class AmiyaSystem:
                     # 构建多轮对话上下文
                     dialog.add_user_message(user_text)
                     system = llm.build_system_prompt(
-                        nickname=tool_executor.user_nickname,
+                        nickname=memory.get_nickname(),
                         focus_status=tool_executor.get_status_for_llm(),
                         memory_summary=memory.get_memory_summary(),
                     )
@@ -382,7 +383,7 @@ class AmiyaSystem:
                         skip_detected = False
                         reply = ""
                         system = llm.build_system_prompt(
-                            nickname=tool_executor.user_nickname,
+                            nickname=memory.get_nickname(),
                             focus_status=tool_executor.get_status_for_llm(),
                             memory_summary=memory.get_memory_summary(),
                         )
@@ -400,23 +401,9 @@ class AmiyaSystem:
                         if sanitized:
                             tts.enqueue_sentence(sanitized)
 
-                    # 等待队列播放完毕（带打断检测轮询）
+                    # 等待队列播放完毕
                     while tts.is_playing and self._running:
-                        if BARGE_IN_ENABLED:
-                            barge_in_text = wake.check_barge_in(
-                                audio_handler, vad, asr, timeout_seconds=3.0
-                            )
-                            if barge_in_text:
-                                logger.info(f"Barge-in triggered: '{barge_in_text[:30]}'")
-                                tts.stop_playback()
-                                break
                         time.sleep(0.1)
-
-                    if barge_in_text:
-                        # 被打断：跳过 assistant message 记录，下一轮用打断文本作为新输入
-                        logger.info("Conversation interrupted by barge-in, processing new command")
-                        last_activity = time.time()
-                        continue
 
                     tts.stop_playback()
 
@@ -496,7 +483,7 @@ class AmiyaSystem:
         """M8: 优雅关闭 — 停止子进程 + 清理资源"""
         logger.info("Shutting down...")
         self._stop_sensor_process()
-        self.bus.drain_main()
+        self.bus.drain()
         logger.info("Goodbye!")
 
 
