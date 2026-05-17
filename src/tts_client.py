@@ -46,6 +46,13 @@ class TTSClient:
         self._barge_vad = None
         self._barge_triggered = False
 
+        # 共享 PyAudio 实例（避免树莓派上多实例竞争USB声卡）
+        self._shared_pa = None
+
+    def set_shared_pa(self, pa):
+        """设置共享 PyAudio 实例，所有 speak() 调用将复用此实例。"""
+        self._shared_pa = pa
+
     # ── 打断检测配置 ──────────────────────────────────────────────
 
     def set_barge_in_handler(self, audio_handler, vad, wake_detector=None, asr_client=None) -> None:
@@ -293,16 +300,20 @@ class TTSClient:
 
     # ── 原有的直接合成/播放 API ──────────────────────────────────
 
-    def speak(self, text: str) -> bool:
+    def speak(self, text: str, pa_instance=None) -> bool:
         """
         流式下载并播放：边从OSS下载音频边通过音箱播放。
-        音频一旦开始下载就立即播放，无需等待完整文件。
+        若提供 pa_instance（共享PyAudio），则复用该实例避免树莓派USB声卡竞争。
         """
         if config.is_mock and config.mock_devices.get("audio"):
             audio = self._mock_synthesize(text)
             from src.audio_handler import AudioHandler
             AudioHandler().play_audio(audio)
             return True
+
+        if pa_instance is None:
+            pa_instance = self._shared_pa
+        pa_shared = pa_instance is not None
 
         try:
             logger.info(f"TTS speak: {text[:40]}...")
@@ -340,7 +351,7 @@ class TTSClient:
 
             # Step 2: 流式下载 + 即时播放
             import pyaudio
-            pa = pyaudio.PyAudio()
+            pa = pa_instance if pa_shared else pyaudio.PyAudio()
             stream = pa.open(
                 format=pyaudio.paInt16,
                 channels=1,
@@ -356,7 +367,8 @@ class TTSClient:
                 if audio_resp.status_code != 200:
                     logger.error(f"TTS download failed: {audio_resp.status_code}")
                     stream.close()
-                    pa.terminate()
+                    if not pa_shared:
+                        pa.terminate()
                     return False
 
                 for chunk in audio_resp.iter_content(chunk_size=chunk_size):
@@ -382,7 +394,8 @@ class TTSClient:
 
             stream.stop_stream()
             stream.close()
-            pa.terminate()
+            if not pa_shared:
+                pa.terminate()
 
             t2 = time.time()
             logger.info(f"TTS done: {total_bytes} bytes played in {t2 - t0:.1f}s "

@@ -140,6 +140,7 @@ class AmiyaSystem:
             asr = ASRClient()
             llm = LLMClient()
             tts = TTSClient()
+            tts.set_shared_pa(audio_handler._pa)
         except ValueError as e:
             logger.error(f"Initialization failed: {e}")
             logger.error("Please check your .env file and API key configuration.")
@@ -172,11 +173,16 @@ class AmiyaSystem:
         print("=" * 50)
         print()
 
+        # 启动欢迎语音提示
+        logger.info("Playing welcome greeting...")
+        tts.speak("欢迎使用阿米娅桌面学习助手。请说阿米娅唤醒我，开始交互。")
+        time.sleep(0.3)  # 等待ALSA释放音频设备
+
         while self._running:
             try:
                 # ━━ IDLE: 等待唤醒词 ━━
                 logger.info("State: IDLE — Waiting for wake word...")
-                detected = wake.listen_for_wake_word(audio_handler, vad, asr)
+                detected = wake.listen_for_wake_word(audio_handler, vad, asr, pa_instance=audio_handler._pa)
                 if not detected or not self._running:
                     # M8: 空闲时也检查传感器消息
                     self._check_sensor_messages(tool_executor)

@@ -221,6 +221,9 @@ class LLMClient:
 
         except Exception as e:
             logger.error(f"LLM stream_chat failed: {e}")
+            if full_text:
+                logger.info(f"Returning partial stream: {len(full_text)} chars")
+                return full_text
             return ""
 
 
