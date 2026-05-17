@@ -1,4 +1,10 @@
-"""IR Obstacle Avoidance Sensor - GPIO红外避障传感器（树莓派5）"""
+"""IR Obstacle Avoidance Sensor — 标准红外避障传感器 (3.3V供电, 单IO输出)
+
+硬件行为：
+  - 无障碍物: 传感器输出 HIGH → GPIO读取 HIGH → Button.is_pressed = False
+  - 有障碍物: 传感器输出 LOW  → GPIO读取 LOW  → Button.is_pressed = True
+  - 接线: GPIO 17, 内部上拉(pull_up=True)
+"""
 
 import time
 from src.config import config
@@ -8,14 +14,14 @@ logger = setup_logger("ir_sensor")
 
 
 class IRSensor:
-    """真实红外避障传感器，接口与IRSensorMock一致"""
+    """标准红外避障传感器 — 遮挡时输出LOW，gpiozero.Button(pull_up) 将LOW映射为is_pressed=True"""
 
     def __init__(self):
         pin = config.get("ir_sensor.pin", 17)
         from gpiozero import Button
 
         self._sensor = Button(pin, pull_up=True)
-        logger.info(f"IR sensor initialized on GPIO{pin}")
+        logger.info(f"IR Obstacle Sensor initialized on GPIO{pin} (pull_up, LOW=obstacle)")
 
     def read(self) -> bool:
         """True = 有遮挡（手机存在），False = 无遮挡"""

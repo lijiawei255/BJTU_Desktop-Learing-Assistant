@@ -134,7 +134,7 @@ DEFAULT_CONFIG = {
         "pan_channel": 2,
         "tilt_channel": 3,
         "min_pulse_us": 500,
-        "max_pulse_us": 2500,
+        "max_pulse_us": 2400,  # SG90标准：500-2400μs → 0-180°
     },
     "led": {
         "pins": {"r": 23, "g": 24, "b": 25},
@@ -153,6 +153,7 @@ DEFAULT_CONFIG = {
     },
     "mock": {
         "enabled": True,
+        "headless": None,  # None=自动检测(非TTY则无头), True=强制无头, False=强制交互
         "audio": True,
         "camera": True,
         "servo": True,

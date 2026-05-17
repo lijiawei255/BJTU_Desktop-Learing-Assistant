@@ -10,16 +10,22 @@ _controller = None  # 模块级PCA9685单例，多个舵机共享同一I2C总线
 
 
 def _get_controller():
-    """懒加载初始化PCA9685 ServoKit控制器"""
+    """懒加载初始化PCA9685 ServoKit控制器 — SG90舵机 500-2400μs 脉冲范围"""
     global _controller
     if _controller is None:
         from adafruit_servokit import ServoKit
 
         addr = config.get("servo.pca9685_addr", 0x40)
         freq = config.get("servo.pwm_frequency", 50)
+        min_pulse = config.get("servo.min_pulse_us", 500)
+        max_pulse = config.get("servo.max_pulse_us", 2400)
         _controller = ServoKit(channels=16, address=addr)
         _controller.frequency = freq
-        logger.info(f"PCA9685 initialized at 0x{addr:02X}, {freq}Hz")
+        # SG90舵机标准脉冲范围500-2400μs，映射到0-180°
+        for i in range(16):
+            _controller.servo[i].set_pulse_width_range(min_pulse, max_pulse)
+            _controller.servo[i].actuation_range = 180
+        logger.info(f"PCA9685 initialized at 0x{addr:02X}, {freq}Hz, pulse={min_pulse}-{max_pulse}μs, range=180°")
     return _controller
 
 

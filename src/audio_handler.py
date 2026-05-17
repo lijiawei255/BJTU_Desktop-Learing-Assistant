@@ -141,8 +141,12 @@ class AudioHandler:
             stream.close()
 
     def _mock_record(self) -> Optional[bytes]:
-        """Mock录音：等待用户按Enter模拟说话结束"""
+        """Mock录音：无头模式直接返回静音，交互模式等待用户Enter"""
         logger.info("[MOCK RECORD] Simulating audio recording...")
+        from src.headless_input import headless_input
+        if headless_input.enabled:
+            logger.debug("[MOCK RECORD] Headless: returning silence immediately")
+            return b"\x00" * 1600
         input("[MOCK] 按 Enter 模拟用户说话结束: ")
         return b"\x00" * 1600  # 返回100ms静音作为占位
 

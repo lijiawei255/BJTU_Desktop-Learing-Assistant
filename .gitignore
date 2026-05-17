@@ -246,5 +246,8 @@ src/models/*.onnx
 # VSCode 工作区配置
 .vscode/
 
+# 树莓派连接信息（隐私，包含IP和密码）
+.rpi_connection
+
 # Claude Code 配置
 .claude/

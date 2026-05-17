@@ -115,7 +115,15 @@ class ASRClient:
             wf.writeframes(pcm_data)
 
     def _mock_recognize(self) -> Optional[str]:
-        """Mock识别：从用户输入获取文本"""
+        """Mock识别：无头从队列获取，交互从终端输入获取"""
+        from src.headless_input import headless_input
+        if headless_input.enabled:
+            text = headless_input.get_input("[MOCK ASR]")
+            if text.strip():
+                logger.info(f"[MOCK ASR] Recognized: {text}")
+                return text.strip()
+            return None
+
         text = input("[MOCK ASR] 请输入用户说的话（模拟ASR识别结果）: ")
         if text.strip():
             logger.info(f"[MOCK ASR] Recognized: {text}")

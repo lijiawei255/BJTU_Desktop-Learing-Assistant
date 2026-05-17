@@ -21,6 +21,15 @@ python -m src.main
 
 # Code formatting
 black src/ tests/
+
+# Run headless mock integration tests (no hardware, no human)
+python -m pytest tests/test_headless_integration.py -v -m "not api"
+
+# Run headless tests on RPi via SSH
+bash scripts/run_headless_tests.sh
+
+# Run headless tests with API-dependent tests
+bash scripts/run_headless_tests.sh --api
 ```
 
 ## Architecture
@@ -132,7 +141,7 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 ## Key Files for M6+ Development
 
 - `src/memory_manager.py` — Cross-session memory, context compression, nickname/preferences
-- `src/tool_executor.py` — `ToolExecutor` manages focus lifecycle (delegates state to `StateController`)
+- `src/tool_executor.py` — `ToolExecutor` manages focus lifecycle (delegates state to `StateController`). IR sensor NOT owned — sensor process is exclusive GPIO owner.
 - `src/state_controller.py` — `FocusState` enum + `StateController` formal state machine (M7)
 - `src/message_bus.py` — `MessageBus` + `IPCMessage` cross-process communication (M8)
 - `src/processes/device_process.py` — Peripheral control subprocess (servo + LED)
@@ -144,7 +153,31 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 - `src/config.py` — All config keys defined here
 - `src/llm_client.py` — `AVAILABLE_TOOLS` + `stream_chat` (add new tools here)
 - `src/wake_word_detector.py` — Wake word detection with fuzzy matching + barge-in gating (M9)
+- `src/headless_input.py` — Headless mock input system for automated testing (queue-based, replaces stdin)
+- `tests/test_headless_integration.py` — Comprehensive headless mock integration tests (32 non-API + 5 API)
+- `scripts/run_headless_tests.sh` — Automated test runner for RPi/Linux
+- `scripts/run_headless_tests.bat` — Automated test runner for Windows
+- `.rpi_connection` — RPi connection info (gitignored, contains IP/user)
 - `docs/ClaudeCode_开发实操手册.md` — Full development manual with M6-M9 specs
+
+## Hardware Specifications (Raspberry Pi 5)
+
+| Hardware | Model | Interface | GPIO | Config Key |
+|----------|-------|-----------|------|------------|
+| Servo ×4 | SG90 (180°, 500-2400μs) | PCA9685 I2C (0x40) | CH0/1=Box, CH2=Pan, CH3=Tilt | `servo.*` |
+| IR Obstacle Sensor | Standard 3.3V, active-LOW | GPIO 17 (pull_up) | Pin 11 | `ir_sensor.pin` |
+| Button | Self-reset, default-HIGH, press-LOW | GPIO 27 (pull_up) | Pin 13 | `button.pin` |
+| RGB LED | Common cathode, active_high | GPIO 23/24/25 | Pins 16/18/22 | `led.pins.*` |
+| TOF Distance | VL53L0X (GY-53) | I2C (0x29) | Bus共享 | `tof_sensor.*` |
+| USB Sound Card | UACDemoV1.0 | USB 2.0 | — | `audio.*` |
+| Camera | OV5647 | MIPI CSI-2 | — | `vision.*` |
+
+Key config: `servo.min_pulse_us=500`, `servo.max_pulse_us=2400` (SG90 standard),
+`servo.box_open_angle=0`, `servo.box_close_angle=90`.
+
+**GPIO Ownership**: Sensor process (`sensor_process.py`) is the exclusive owner of IR (GPIO 17)
+and TOF (I2C 0x29) hardware. Main process only receives PHONE_DETECTED/PHONE_REMOVED messages
+via MessageBus — never reads GPIO directly. This avoids multi-process GPIO conflicts.
 
 ## Mock Mode
 
@@ -153,6 +186,16 @@ Default: all hardware mocked. Edit `data/config.json`:
 {"mock": {"enabled": true, "audio": true, "servo": true, ...}}
 ```
 Per-device granularity: set individual flags to `false` for selective real hardware testing.
+
+### Headless Mock Mode (Automated Testing)
+
+When `mock.headless` is `null` (auto) or `true`, the system replaces all `input()` calls with a
+thread-safe `queue.Queue`-based input feeder. Detection: config flag > `sys.stdin.isatty()`.
+
+- **Auto-detect**: Pytest/SSH pipe → headless; Terminal → interactive
+- **Force headless**: Set `"headless": true` in config.json
+- **API tests**: Marked with `@pytest.mark.api`, use `-m "not api"` to skip
+- **RPi safety**: Mock audio mode prevents PyAudio from being imported/initialized
 
 ## API Key Setup
 
