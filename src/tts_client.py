@@ -48,13 +48,16 @@ class TTSClient:
 
     # ── 打断检测配置 ──────────────────────────────────────────────
 
-    def set_barge_in_handler(self, audio_handler, vad) -> None:
-        """启用打断检测：传入 AudioHandler 和 VADHandler 实例。
-        设置后，所有队列播放都会在后台监听麦克风，检测到用户说话时立即停止。
+    def set_barge_in_handler(self, audio_handler, vad, wake_detector=None, asr_client=None) -> None:
+        """启用打断检测：传入 AudioHandler、VADHandler、WakeWordDetector 和 ASRClient。
+        设置后，TTS播放期间后台监听麦克风，检测到语音后采集完整语句，
+        通过ASR验证是否以唤醒词开头，确认后才触发打断。
         """
         self._barge_audio_handler = audio_handler
         self._barge_vad = vad
-        logger.debug("Barge-in detection enabled")
+        self._barge_wake = wake_detector
+        self._barge_asr = asr_client
+        logger.debug("Barge-in detection enabled (wake-word verified)")
 
     @property
     def was_barge_in(self) -> bool:
@@ -174,7 +177,7 @@ class TTSClient:
         if self.sample_rate != self.output_sample_rate:
             pcm_data = TTSClient.resample_24k_to_16k(pcm_data)
 
-        # 打断检测：启动麦克风监听线程
+        # 打断检测：启动麦克风监听线程（唤醒词验证后触发）
         barge_event = threading.Event()
 
         if self._barge_audio_handler and self._barge_vad:
@@ -196,7 +199,12 @@ class TTSClient:
                     return
 
                 speech_frames = 0
-                required_frames = 6  # ~180ms at 30ms/frame
+                required_frames = 5  # ~150ms 语音触发阈值
+                audio_buffer = []
+                collecting = False
+                silence_frames = 0
+                silence_to_end = 25  # ~750ms 静音判定结束
+                min_speech_frames = 10  # 至少300ms语音
 
                 while not barge_event.is_set():
                     try:
@@ -205,14 +213,54 @@ class TTSClient:
                         )
                     except Exception:
                         break
-                    if vad.is_speech(frame_data, sample_rate):
-                        speech_frames += 1
-                        if speech_frames >= required_frames:
-                            logger.debug("Barge-in: speech detected during TTS playback")
-                            barge_event.set()
-                            break
+
+                    is_speech = vad.is_speech(frame_data, sample_rate)
+
+                    if is_speech:
+                        if not collecting:
+                            collecting = True
+                            audio_buffer = [frame_data]
+                            speech_frames = 1
+                            silence_frames = 0
+                        else:
+                            audio_buffer.append(frame_data)
+                            speech_frames += 1
+                            silence_frames = 0
                     else:
-                        speech_frames = max(0, speech_frames - 1)
+                        if collecting:
+                            audio_buffer.append(frame_data)
+                            silence_frames += 1
+
+                    # 语音段结束（静音判定）
+                    if collecting and speech_frames >= min_speech_frames and silence_frames >= silence_to_end:
+                        # 去除末尾静音帧
+                        trim_count = min(silence_frames, 10)
+                        effective = audio_buffer[:-trim_count] if trim_count > 0 else audio_buffer
+                        audio_data = b"".join(effective)
+
+                        # ASR → 唤醒词验证
+                        if self._barge_asr and self._barge_wake and len(effective) >= min_speech_frames:
+                            try:
+                                result = self._barge_asr.recognize_once(audio_data)
+                                if result and self._barge_wake.starts_with_wake_word(result):
+                                    logger.info(f"Barge-in CONFIRMED: wake word in '{result[:40]}'")
+                                    barge_event.set()
+                                    break
+                                else:
+                                    logger.debug(f"Barge-in rejected (no wake word): '{result[:30] if result else 'empty'}'")
+                            except Exception as e:
+                                logger.debug(f"Barge-in ASR error: {e}")
+                        else:
+                            # 无 ASR/唤醒检测器，回退到纯语音检测
+                            if speech_frames >= required_frames:
+                                logger.debug("Barge-in: speech detected (no wake-verify available)")
+                                barge_event.set()
+                                break
+
+                        collecting = False
+                        audio_buffer = []
+                        speech_frames = 0
+                        silence_frames = 0
 
                 mic_stream.stop_stream()
                 mic_stream.close()

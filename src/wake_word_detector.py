@@ -159,7 +159,7 @@ class WakeWordDetector:
         audio_handler,
         vad_handler,
         asr_client,
-        timeout_seconds: float = 3.0,
+        timeout_seconds: float = 2.0,
     ) -> Optional[str]:
         """
         TTS播放期间的打断检测（非阻塞）。
@@ -172,19 +172,26 @@ class WakeWordDetector:
         if config.is_mock and config.mock_devices.get("audio"):
             return self._mock_check_barge_in()
 
+        stream_close = None
         try:
             import pyaudio
-            pa = pyaudio.PyAudio()
+
+            # 复用 AudioHandler 的 PyAudio 实例，避免每次轮询创建新实例
+            pa = getattr(audio_handler, '_pa', None)
+            if pa is None:
+                pa = pyaudio.PyAudio()
+
             stream = pa.open(
                 format=pyaudio.paInt16,
                 channels=1,
                 rate=self.sample_rate,
                 input=True,
+                input_device_index=getattr(audio_handler, '_input_device', None),
                 frames_per_buffer=self.chunk_size,
             )
 
             # 阶段1: 快速VAD预检 — 读几帧看是否有语音
-            pre_check_frames = 8  # ~240ms
+            pre_check_frames = 6  # ~180ms (reduced from 8)
             speech_count = 0
             pre_frames = []
             for _ in range(pre_check_frames):
@@ -192,16 +199,14 @@ class WakeWordDetector:
                     data = stream.read(self.chunk_size, exception_on_overflow=False)
                 except Exception:
                     stream.close()
-                    pa.terminate()
                     return None
                 pre_frames.append(data)
                 if vad_handler.is_speech(data, self.sample_rate):
                     speech_count += 1
 
-            if speech_count < 3:  # 至少3帧有语音才触发
+            if speech_count < 2:  # 至少2帧有语音才触发 (reduced from 3)
                 stream.stop_stream()
                 stream.close()
-                pa.terminate()
                 return None
 
             # 阶段2: 有语音迹象，完整录音至静音
@@ -211,7 +216,7 @@ class WakeWordDetector:
             silence_frames = 0
             min_speech_frames = 10
             silence_to_end = 18  # ~540ms静音判定结束
-            max_frames = 120  # 最多~3.6秒
+            max_frames = 80  # 最多~2.4秒 (reduced from 120)
 
             while len(audio_buffer) < max_frames:
                 try:
@@ -229,7 +234,6 @@ class WakeWordDetector:
 
             stream.stop_stream()
             stream.close()
-            pa.terminate()
 
             if speech_frames < min_speech_frames:
                 logger.debug("Barge-in: too few speech frames, ignoring")
