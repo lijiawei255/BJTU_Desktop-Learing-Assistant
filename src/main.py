@@ -51,6 +51,8 @@ class AmiyaSystem:
         self._consecutive_errors = 0
         self._degraded_until = 0.0
         self._last_posture_alert = 0.0  # 坐姿提醒冷却
+        self._last_phone_state = False  # 最近一次IR传感器手机状态
+        self._sensor_checker_thread: threading.Thread | None = None
         signal.signal(signal.SIGINT, self._handle_signal)
 
         # M8: 消息总线 + 关闭信号
@@ -102,23 +104,50 @@ class AmiyaSystem:
             self._sensor_thread.join(timeout=2.0)
             logger.info("Sensor thread stopped")
 
+    def _start_sensor_checker(self, tool_executor: "ToolExecutor"):
+        """后台线程：持续处理传感器消息，确保IDLE态也能收到坐姿/手机提醒"""
+        def _sensor_check_loop():
+            while not self.shutdown_event.is_set():
+                try:
+                    self._check_sensor_messages(tool_executor)
+                except Exception as e:
+                    logger.error(f"Sensor checker error: {e}")
+                time.sleep(0.5)
+
+        self._sensor_checker_thread = threading.Thread(
+            target=_sensor_check_loop, daemon=True, name="sensor-checker"
+        )
+        self._sensor_checker_thread.start()
+        logger.info("Sensor checker thread started")
+
+    def _stop_sensor_checker(self):
+        """停止传感器检查线程"""
+        if self._sensor_checker_thread and self._sensor_checker_thread.is_alive():
+            self._sensor_checker_thread.join(timeout=2.0)
+            logger.info("Sensor checker thread stopped")
+
     def _check_sensor_messages(self, tool_executor: ToolExecutor):
         """M8: 检查传感器消息并分发到状态机"""
         msg = self.bus.receive(timeout=0)
         while msg is not None:
             if msg.type == MessageType.PHONE_DETECTED:
+                self._last_phone_state = True
                 logger.info(f"[Sensor] Phone detected: {msg.payload}")
                 if tool_executor.state_ctrl.state.name == "WAITING_PHONE":
                     # 等待放手机状态 → 触发关盖
-                    tool_executor.state_ctrl.phone_inserted()
+                    result = tool_executor.state_ctrl.phone_inserted()
+                    logger.info(f"[State] phone_inserted: {result}")
                 elif tool_executor.state_ctrl.state.name == "PAUSED":
                     # 暂停中放回手机 → 恢复
-                    tool_executor.state_ctrl.phone_inserted()
+                    result = tool_executor.state_ctrl.phone_inserted()
+                    logger.info(f"[State] phone_inserted: {result}")
 
             elif msg.type == MessageType.PHONE_REMOVED:
+                self._last_phone_state = False
                 logger.info(f"[Sensor] Phone removed: {msg.payload}")
                 if tool_executor.state_ctrl.state.name == "FOCUSING":
-                    tool_executor.state_ctrl.phone_removed()
+                    result = tool_executor.state_ctrl.phone_removed()
+                    logger.info(f"[State] phone_removed: {result}")
 
             elif msg.type == MessageType.DISTANCE_TOF:
                 distance = msg.payload.get("distance_mm", 0)
@@ -139,6 +168,14 @@ class AmiyaSystem:
                 logger.debug(f"[Sensor] Heartbeat from {msg.source}")
 
             msg = self.bus.receive(timeout=0)
+
+        # 兜底：传感器仅在状态变化时发送消息，若启动时已检测到手机但
+        # PHONE_DETECTED 在IDLE期间被丢弃，WAITING_PHONE会永远卡住。
+        # 此处根据最近一次已知状态主动触发。
+        if (self._last_phone_state
+                and tool_executor.state_ctrl.state.name == "WAITING_PHONE"):
+            result = tool_executor.state_ctrl.phone_inserted()
+            logger.info(f"[State] phone_inserted (fallback): {result}")
 
     def _run_voice_loop(self):
         """多轮语音对话 — 唤醒后支持连续对话+打断 (M8: 传感器消息处理)"""
@@ -165,9 +202,11 @@ class AmiyaSystem:
         dialog._memory = memory
         tool_executor = ToolExecutor()
         tool_executor.tts = tts  # 注入TTS供走神/坐姿提醒使用
+        tool_executor.state.on_tts_speak = tts.speak  # 状态机TTS播报回调
 
-        # M8: 启动传感器进程
+        # M8: 启动传感器进程 + 后台传感器检查线程
         self._start_sensor_process()
+        self._start_sensor_checker(tool_executor)
 
         CONVERSATION_TIMEOUT = config.get("audio.conversation_timeout_seconds", 6)
         SILENCE_TURNS_LIMIT = 2
@@ -327,7 +366,8 @@ class AmiyaSystem:
                             splitter.feed(delta)
 
                     reply = llm.stream_chat(
-                        messages, on_text_chunk=on_chunk, tools=AVAILABLE_TOOLS
+                        messages, on_text_chunk=on_chunk,
+                        tools=AVAILABLE_TOOLS, tool_choice="auto",
                     )
 
                     # ━━ [SKIP] / [EXIT] 标记处理 ━━
@@ -495,6 +535,7 @@ class AmiyaSystem:
     def shutdown(self):
         """M8: 优雅关闭 — 停止子进程 + 清理资源"""
         logger.info("Shutting down...")
+        self._stop_sensor_checker()
         self._stop_sensor_process()
         self.bus.drain()
         logger.info("Goodbye!")

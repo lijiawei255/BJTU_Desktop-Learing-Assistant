@@ -119,7 +119,7 @@ DEFAULT_CONFIG = {
     },
     "ir_sensor": {
         "sample_interval_ms": 200,
-        "debounce_count": 3,
+        "debounce_count": 5,
         "pin": 17,
         "ir_debounce_seconds": 3,
     },

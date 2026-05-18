@@ -453,8 +453,11 @@ class CameraController:
             logger.warning("Cannot track: no pan/tilt servos available")
             return
 
+        # 若摄像头硬件尚未初始化，先启动
+        if self._camera is None:
+            self.start()
+
         self.detector.reset()
-        self._running = True
         self._tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self._tracking_thread.start()
         logger.info("Tracking loop started")
