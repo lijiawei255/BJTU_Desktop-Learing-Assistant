@@ -1,4 +1,11 @@
-"""GPIO Button - 物理按钮驱动（树莓派5）+ Mock"""
+"""GPIO Button — 自复按钮驱动 (默认高电平, 按下低电平) + Mock
+
+硬件行为：
+  - 未按下: GPIO读取 HIGH → Button.is_pressed = False
+  - 按下:   GPIO读取 LOW  → Button.is_pressed = True
+  - 接线: GPIO 27, 内部上拉(pull_up=True), 按下时接通GND
+  - 短按: < 3.0s,  长按: >= 3.0s
+"""
 
 import time
 from src.config import config

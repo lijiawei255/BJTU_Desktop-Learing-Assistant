@@ -34,8 +34,8 @@ DEFAULT_CONFIG = {
         "wake_cooldown_seconds": 5,
         "wake_confirm_ms": 1500,
         "wake_asr_streaming": True,
-        "conversation_timeout_seconds": 10,
-        "barge_in_enabled": True,
+        "conversation_timeout_seconds": 6,
+        "barge_in_enabled": False,
         "wake_word_fuzzy_threshold": 0.6,
     },
     "llm": {
@@ -82,23 +82,23 @@ DEFAULT_CONFIG = {
         "camera_width": 640,
         "camera_height": 480,
         "fps": 15,
-        "face_detection_interval": 3,
-        "face_confidence_threshold": 0.7,
+        "face_detection_interval": 1,
+        "face_confidence_threshold": 0.5,
         "dead_zone_x": 40,
         "dead_zone_y": 30,
         "pan_pid": {"kp": 0.08, "ki": 0.01, "kd": 0.02},
         "tilt_pid": {"kp": 0.06, "ki": 0.008, "kd": 0.015},
-        "pan_range": [0, 180],
-        "tilt_range": [0, 90],
+        "pan_range": [40, 180],     # 云台限位：水平≥40°
+        "tilt_range": [0, 140],     # 云台限位：俯仰≤140°
         "default_pan_angle": 90,
-        "default_tilt_angle": 45,
+        "default_tilt_angle": 80,
         "face_lost_timeout": 10,
         "search_timeout": 3,
         "scan_step_degrees": 5,
         "scan_delay_ms": 200,
         "ear_threshold": 0.2,
         "distraction_confirm_frames": 10,
-        "distraction_interval_frames": 5,
+        "distraction_interval_frames": 2,
         "head_yaw_threshold": 20,
         "head_pitch_threshold": 15,
     },
@@ -119,7 +119,7 @@ DEFAULT_CONFIG = {
     },
     "ir_sensor": {
         "sample_interval_ms": 200,
-        "debounce_count": 3,
+        "debounce_count": 5,
         "pin": 17,
         "ir_debounce_seconds": 3,
     },
@@ -134,7 +134,11 @@ DEFAULT_CONFIG = {
         "pan_channel": 2,
         "tilt_channel": 3,
         "min_pulse_us": 500,
-        "max_pulse_us": 2500,
+        "max_pulse_us": 2400,  # SG90标准：500-2400μs → 0-180°
+        "pan_angle_min": 40,   # 云台水平限位（防止连接线拉扯）
+        "pan_angle_max": 180,
+        "tilt_angle_min": 0,
+        "tilt_angle_max": 140,  # 云台俯仰限位（防止连接线拉扯）
     },
     "led": {
         "pins": {"r": 23, "g": 24, "b": 25},
@@ -153,6 +157,7 @@ DEFAULT_CONFIG = {
     },
     "mock": {
         "enabled": True,
+        "headless": None,  # None=自动检测(非TTY则无头), True=强制无头, False=强制交互
         "audio": True,
         "camera": True,
         "servo": True,

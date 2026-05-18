@@ -9,14 +9,17 @@ logger = setup_logger("mock_servo")
 class ServoMock:
     """模拟舵机控制器"""
 
-    def __init__(self, name: str = "servo"):
+    def __init__(self, name: str = "servo",
+                 angle_min: float = 0.0, angle_max: float = 180.0):
         self.name = name
         self.current_angle = 0.0
-        logger.info(f"[MOCK] Servo '{name}' initialized")
+        self._angle_min = angle_min
+        self._angle_max = angle_max
+        logger.info(f"[MOCK] Servo '{name}' initialized (limit: {angle_min}°-{angle_max}°)")
 
     def set_angle(self, angle: float):
-        """设置角度"""
-        angle = max(0, min(180, angle))
+        """设置角度（自动钳位到限位范围）"""
+        angle = max(self._angle_min, min(self._angle_max, angle))
         # 模拟运动时间
         move_time = abs(angle - self.current_angle) / 90.0  # 90度/秒
         if move_time > 0:

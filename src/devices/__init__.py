@@ -12,21 +12,29 @@ def _is_mock(device: str) -> bool:
 
 
 def get_pan_servo():
-    """获取摄像头云台水平舵机"""
+    """获取摄像头云台水平舵机 — 限位防止拉扯连接线"""
     if _is_mock("servo"):
         from .servo_mock import ServoMock
-        return ServoMock("pan_servo")
+        return ServoMock("pan_servo",
+                         angle_min=config.get("servo.pan_angle_min", 40),
+                         angle_max=config.get("servo.pan_angle_max", 180))
     from .servo_controller import SingleServo
-    return SingleServo(config.get("servo.pan_channel", 2), name="pan_servo")
+    return SingleServo(config.get("servo.pan_channel", 2), name="pan_servo",
+                       angle_min=config.get("servo.pan_angle_min", 40),
+                       angle_max=config.get("servo.pan_angle_max", 180))
 
 
 def get_tilt_servo():
-    """获取摄像头云台俯仰舵机"""
+    """获取摄像头云台俯仰舵机 — 限位防止拉扯连接线"""
     if _is_mock("servo"):
         from .servo_mock import ServoMock
-        return ServoMock("tilt_servo")
+        return ServoMock("tilt_servo",
+                         angle_min=config.get("servo.tilt_angle_min", 0),
+                         angle_max=config.get("servo.tilt_angle_max", 140))
     from .servo_controller import SingleServo
-    return SingleServo(config.get("servo.tilt_channel", 3), name="tilt_servo")
+    return SingleServo(config.get("servo.tilt_channel", 3), name="tilt_servo",
+                       angle_min=config.get("servo.tilt_angle_min", 0),
+                       angle_max=config.get("servo.tilt_angle_max", 140))
 
 
 def get_box_servo_left():

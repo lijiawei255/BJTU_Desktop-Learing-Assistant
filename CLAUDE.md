@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-桌面学习助手"阿米娅" — AI voice companion for students. LLM voice interaction + phone storage management + posture/distraction monitoring. Currently **Phase 1 (PC mock development)** with full hardware mock layer. Target platform: Raspberry Pi 5.
+桌面学习助手"阿米娅" — AI voice companion for students. LLM voice interaction + phone storage management + posture/distraction monitoring. Currently **Phase 2 (RPi hardware integration)** — all 8 hardware devices verified working together. Target platform: Raspberry Pi 5.
 
 ## Development Commands
 
@@ -21,6 +21,15 @@ python -m src.main
 
 # Code formatting
 black src/ tests/
+
+# Run headless mock integration tests (no hardware, no human)
+python -m pytest tests/test_headless_integration.py -v -m "not api"
+
+# Run headless tests on RPi via SSH
+bash scripts/run_headless_tests.sh
+
+# Run headless tests with API-dependent tests
+bash scripts/run_headless_tests.sh --api
 ```
 
 ## Architecture
@@ -36,7 +45,9 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 - **Devices**: `src/devices/__init__.py` factory functions route to Mock (PC) or Real (RPi) via `config.is_mock`
 - **Focus mode**: `src/tool_executor.py` — `ToolExecutor` manages full lifecycle; `src/state_controller.py` — `StateController` + `FocusState` state machine (M7)
 - **IPC**: `src/message_bus.py` — `MessageBus` + `IPCMessage` cross-process communication (M8)
-- **Camera**: `src/devices/camera.py` — PID face tracking + auto-scan + MediaPipe distraction detection
+- **Sensor Checker**: Background daemon thread (`_start_sensor_checker`) continuously polls sensor messages every 0.5s, ensuring posture/phone alerts work even during wake-word listening or IDLE state
+- **Phone Fallback**: Sensor process only emits PHONE_DETECTED on state CHANGE. If phone was already present when entering WAITING_PHONE, `_last_phone_state` fallback in `_check_sensor_messages` auto-triggers `phone_inserted()`
+- **Camera**: `src/devices/camera.py` — PID face tracking + auto-scan + MediaPipe distraction detection. Frame vertically flipped (`cv2.flip(frame, 0)`) for upside-down camera mount.
 
 ---
 
@@ -117,7 +128,7 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 
 ---
 
-## Current Status (M7+M8+M9 Complete)
+## Current Status (M1-M10 Complete)
 
 | Milestone | Status |
 |-----------|--------|
@@ -128,23 +139,70 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 | M7: Focus state machine | ✅ Done |
 | M8: Multiprocess architecture | ✅ Done |
 | M9: Voice interaction optimizations | ✅ Done |
+| M10: Hardware integration + camera tracking | ✅ Done |
 
 ## Key Files for M6+ Development
 
 - `src/memory_manager.py` — Cross-session memory, context compression, nickname/preferences
-- `src/tool_executor.py` — `ToolExecutor` manages focus lifecycle (delegates state to `StateController`)
-- `src/state_controller.py` — `FocusState` enum + `StateController` formal state machine (M7)
+- `src/tool_executor.py` — `ToolExecutor` manages focus lifecycle (delegates state to `StateController`). IR sensor NOT owned — sensor process is exclusive GPIO owner.
+- `src/state_controller.py` — `FocusState` enum + `StateController` formal state machine (M7). `on_tts_speak` callback bound by main.py for state-change voice announcements.
 - `src/message_bus.py` — `MessageBus` + `IPCMessage` cross-process communication (M8)
 - `src/processes/device_process.py` — Peripheral control subprocess (servo + LED)
-- `src/processes/sensor_process.py` — Sensor subprocess/thread (TOF + IR) via message bus (M8)
+- `src/processes/sensor_process.py` — Sensor subprocess/thread (TOF + IR) via message bus (M8). Only sends PHONE_DETECTED/PHONE_REMOVED on state CHANGE — main.py has fallback for persistent state.
 - `src/processes/vision_process.py` — Vision subprocess (camera tracking + distraction)
 - `src/dialog_manager.py` — Message history
 - `src/devices/__init__.py` — Device factory (add new devices here)
-- `src/devices/camera.py` — PID tracker + MediaPipe distraction detector (`PIDController` 在此文件中，非独立 `utils/pid.py`)
-- `src/config.py` — All config keys defined here
-- `src/llm_client.py` — `AVAILABLE_TOOLS` + `stream_chat` (add new tools here)
-- `src/wake_word_detector.py` — Wake word detection with fuzzy matching + barge-in gating (M9)
-- `docs/ClaudeCode_开发实操手册.md` — Full development manual with M6-M9 specs
+- `src/devices/camera.py` — PID tracker + MediaPipe distraction detector. `start_tracking()` auto-initializes picamera2 if needed. Frames are `cv2.flip(frame, 0)` vertically (camera mounted upside-down). `stop_tracking()` sets `_running=False` to actually halt the tracking thread. Distraction detection: 2s continuous filter + 15s cooldown.
+- `src/config.py` — All config keys defined here. Key: `face_detection_interval=1` (every frame), `ir_sensor.debounce_count=5` (1s window)
+- `src/llm_client.py` — `AVAILABLE_TOOLS` + `stream_chat` (add new tools here). Passes `tool_choice="auto"` for tool-calling.
+- `src/text_sanitizer.py` — Cleans LLM output for TTS: ellipsis (…+ / \\.{3,}) → `。`, em-dash (—+) → `，`
+- `src/wake_word_detector.py` — Wake word detection with fuzzy matching + barge-in gating (M9). `listen_for_wake_word()` blocks in VAD loop — sensor checker background thread compensates.
+- `src/headless_input.py` — Headless mock input system for automated testing (queue-based, replaces stdin)
+- `system_prompts/amiya_persona.txt` — Persona + tool-calling rules (Rule 13: mandatory function calls for focus/pause/status operations)
+- `tests/test_headless_integration.py` — Comprehensive headless mock integration tests (32 non-API + 5 API)
+- `scripts/camera_demo.py` — Standalone camera+servo demo for presentation recording
+- `scripts/run_headless_tests.sh` — Automated test runner for RPi/Linux
+- `scripts/run_headless_tests.bat` — Automated test runner for Windows
+- `.rpi_connection` — RPi connection info (gitignored, contains IP/user)
+- `docs/ClaudeCode_开发实操手册.md` — Full development manual with M6-M10 specs
+
+## Hardware Specifications (Raspberry Pi 5)
+
+| Hardware | Model | Interface | GPIO | Config Key |
+|----------|-------|-----------|------|------------|
+| Servo ×4 | SG90 (180°, 500-2400μs) | PCA9685 I2C (0x40) | CH0/1=Box, CH2=Pan, CH3=Tilt | `servo.*` |
+| IR Obstacle Sensor | Standard 3.3V, active-LOW | GPIO 17 (pull_up) | Pin 11 | `ir_sensor.pin` |
+| Button | Self-reset, default-HIGH, press-LOW | GPIO 27 (pull_up) | Pin 13 | `button.pin` |
+| RGB LED | Common cathode, active_high | GPIO 23/24/25 | Pins 16/18/22 | `led.pins.*` |
+| TOF Distance | VL53L0X (GY-53) | I2C (0x29) | Bus共享 | `tof_sensor.*` |
+| USB Sound Card | UACDemoV1.0 | USB 2.0 | — | `audio.*` |
+| Camera | OV5647 | MIPI CSI-2 | — | `vision.*` |
+
+Key config: `servo.min_pulse_us=500`, `servo.max_pulse_us=2400` (SG90 standard),
+`servo.box_open_angle=0`, `servo.box_close_angle=90`.
+
+**GPIO Ownership**: Sensor process (`sensor_process.py`) is the exclusive owner of IR (GPIO 17)
+and TOF (I2C 0x29) hardware. Main process only receives PHONE_DETECTED/PHONE_REMOVED messages
+via MessageBus — never reads GPIO directly. This avoids multi-process GPIO conflicts.
+
+**GPIO Conflicts** (RPi 5 Bookworm defaults):
+- GPIO23 may be claimed by `dtoverlay=gpio-ir` (IR remote receiver). Disable in `/boot/firmware/config.txt`:
+  `#dtoverlay=gpio-ir,gpio_pin=23`
+- GPIO17 may be claimed by `dtoverlay=uart0,ctsrts` (UART RTS). Change to:
+  `dtoverlay=uart0`
+- After editing config.txt, run `sudo reboot` and verify with `pinctrl 17,23`
+
+**`.env` priority**: `ENABLE_MOCK=true` in `.env` overrides `config.json` mock.enabled. During real
+hardware testing, comment out or set to `false` in `.env`.
+
+**Camera Setup** (RPi):
+- picamera2 MUST use system apt package (`python3-picamera2`), NOT pip version. Link into venv:
+  `ln -sf /usr/lib/python3/dist-packages/picamera2 $VENV/site-packages/`
+- CSI camera auto-detected via `camera_auto_detect=1` in config.txt
+- Face tracking: OpenCV Haar Cascade (fast) + MediaPipe Face Mesh (precise landmarks)
+- MediaPipe confidence: 0.4 (optimized for indoor lighting)
+- Face detection interval: every frame (`face_detection_interval=1`), distraction check: every 2 frames
+- Camera mounted upside-down → `cv2.flip(frame, 0)` in `_tracking_loop()` corrects orientation for face detection and MediaPipe
 
 ## Mock Mode
 
@@ -153,6 +211,16 @@ Default: all hardware mocked. Edit `data/config.json`:
 {"mock": {"enabled": true, "audio": true, "servo": true, ...}}
 ```
 Per-device granularity: set individual flags to `false` for selective real hardware testing.
+
+### Headless Mock Mode (Automated Testing)
+
+When `mock.headless` is `null` (auto) or `true`, the system replaces all `input()` calls with a
+thread-safe `queue.Queue`-based input feeder. Detection: config flag > `sys.stdin.isatty()`.
+
+- **Auto-detect**: Pytest/SSH pipe → headless; Terminal → interactive
+- **Force headless**: Set `"headless": true` in config.json
+- **API tests**: Marked with `@pytest.mark.api`, use `-m "not api"` to skip
+- **RPi safety**: Mock audio mode prevents PyAudio from being imported/initialized
 
 ## API Key Setup
 

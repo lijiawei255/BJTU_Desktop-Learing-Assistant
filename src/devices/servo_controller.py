@@ -10,25 +10,34 @@ _controller = None  # 模块级PCA9685单例，多个舵机共享同一I2C总线
 
 
 def _get_controller():
-    """懒加载初始化PCA9685 ServoKit控制器"""
+    """懒加载初始化PCA9685 ServoKit控制器 — SG90舵机 500-2400μs 脉冲范围"""
     global _controller
     if _controller is None:
         from adafruit_servokit import ServoKit
 
         addr = config.get("servo.pca9685_addr", 0x40)
         freq = config.get("servo.pwm_frequency", 50)
+        min_pulse = config.get("servo.min_pulse_us", 500)
+        max_pulse = config.get("servo.max_pulse_us", 2400)
         _controller = ServoKit(channels=16, address=addr)
         _controller.frequency = freq
-        logger.info(f"PCA9685 initialized at 0x{addr:02X}, {freq}Hz")
+        # SG90舵机标准脉冲范围500-2400μs，映射到0-180°
+        for i in range(16):
+            _controller.servo[i].set_pulse_width_range(min_pulse, max_pulse)
+            _controller.servo[i].actuation_range = 180
+        logger.info(f"PCA9685 initialized at 0x{addr:02X}, {freq}Hz, pulse={min_pulse}-{max_pulse}μs, range=180°")
     return _controller
 
 
 class SingleServo:
     """单个SG90舵机控制器，封装一个PCA9685通道，接口与ServoMock一致"""
 
-    def __init__(self, channel: int, name: str = "servo"):
+    def __init__(self, channel: int, name: str = "servo",
+                 angle_min: float = 0.0, angle_max: float = 180.0):
         self.name = name
         self._channel = channel
+        self._angle_min = angle_min
+        self._angle_max = angle_max
         self._kit = _get_controller()
         self._servo = self._kit.servo[channel]
         try:
@@ -36,12 +45,13 @@ class SingleServo:
         except Exception:
             self.current_angle = 90.0
         logger.info(
-            f"Servo '{name}' on channel {channel} initialized at {self.current_angle:.1f}°"
+            f"Servo '{name}' on channel {channel} initialized at {self.current_angle:.1f}° "
+            f"(limit: {angle_min}°-{angle_max}°)"
         )
 
     def set_angle(self, angle: float):
-        """设置角度 0-180°，含运动时间模拟"""
-        angle = max(0, min(180, angle))
+        """设置角度（自动钳位到限位范围），含运动时间模拟"""
+        angle = max(self._angle_min, min(self._angle_max, angle))
         move_time = abs(angle - self.current_angle) / 90.0
         if move_time > 0:
             time.sleep(min(move_time, 2.0))

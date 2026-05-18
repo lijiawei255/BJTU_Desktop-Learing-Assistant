@@ -9,7 +9,7 @@ from typing import Dict, Any
 from src.config import config
 from src.devices import (
     get_box_servo_left, get_box_servo_right, get_pan_servo, get_tilt_servo,
-    get_ir_sensor, get_led, get_camera,
+    get_led, get_camera,
 )
 from src.state_controller import StateController, FocusState
 from src.utils.logger import setup_logger
@@ -31,8 +31,8 @@ class ToolExecutor:
         # ── 硬件设备（Mock 或 Real，由 config 决定） ──
         self.box_servo_left = get_box_servo_left()
         self.box_servo_right = get_box_servo_right()
-        self.ir_sensor = get_ir_sensor()
         self.led = get_led()
+        # 注意：IR传感器由传感器子进程独占，避免GPIO冲突
 
         # 摄像头云台舵机 + 摄像头
         self.pan_servo = get_pan_servo()
@@ -42,12 +42,16 @@ class ToolExecutor:
 
         # ── M7: 状态机控制器（替代旧的布尔标志） ──
         self.state = StateController()
+        self.state_ctrl = self.state  # 别名，兼容 main.py 和测试引用
 
         # ── 绑定状态机回调到设备操作 ──
         self._bind_state_callbacks()
 
         # ── 用户称呼 ──
         self.user_nickname = config.get("system.nickname", "博士")
+
+        # ── 语音客户端引用（由 main.py 注入） ──
+        self.tts = None
 
         logger.info("ToolExecutor 初始化完成 (M7 StateController 集成)")
 
@@ -157,11 +161,23 @@ class ToolExecutor:
     # ═══════════════════════════════════════════════════════════
 
     def _on_distraction(self, reason: str):
-        """走神检测回调（由摄像头跟踪线程调用）"""
-        if reason == "eyes_closed":
-            logger.info("走神检测: 闭眼")
-        elif reason == "looking_away":
-            logger.info("走神检测: 视线偏离")
+        """走神检测回调（由摄像头跟踪线程调用，2秒滤波后触发）"""
+        logger.info(f"走神检测: {reason} — 播放提醒语音")
+        import threading
+        threading.Thread(
+            target=lambda: self._speak_alert("博士，现在还不可以休息哦！"),
+            daemon=True
+        ).start()
+
+    def _speak_alert(self, text: str):
+        """播放提醒语音（独立线程，复用共享TTS实例避免音频竞争）"""
+        try:
+            if self.tts:
+                self.tts.speak(text)
+            else:
+                logger.warning("TTS未注入，无法播放提醒")
+        except Exception as e:
+            logger.warning(f"提醒播放失败: {e}")
 
     # ═══════════════════════════════════════════════════════════
     # 工具调度器 — LLM Function Calling 入口
@@ -204,31 +220,21 @@ class ToolExecutor:
         """
         开启专注模式:
         1. StateController.start_focus() 验证并转移到 WAITING_PHONE
-        2. 等待IR传感器检测手机放入
-        3. 手机放入后 -> StateController.phone_inserted() 完成转移
+        2. 传感器子进程检测手机放入 → PHONE_DETECTED → phone_inserted()
+        3. 主循环 _check_sensor_messages() 完成状态转移
+        (不再直接操作IR传感器，由传感器子进程独占GPIO，避免冲突)
         """
         duration = args.get("duration_minutes",
                             config.get("focus_mode.default_duration_minutes", 40))
 
-        # 通过状态机验证并开始
         result = self.state.start_focus(duration)
         if not result["success"]:
             return result
 
-        # 等待用户放入手机（阻塞，带超时）
-        timeout = config.get("focus_mode.waiting_phone_timeout_seconds", 60)
-        phone_detected = self.ir_sensor.wait_for_phone(timeout_seconds=timeout)
-
-        if not phone_detected:
-            # 超时：取消专注
-            self.state.cancel_focus()
-            return {
-                "success": False,
-                "result": "没有检测到手机放入盒子，请把手机放进去后再说一次。",
-            }
-
-        # 手机已放入 -> 关盖 -> 开始计时
-        return self.state.phone_inserted()
+        return {
+            "success": True,
+            "result": f"已开启{duration}分钟专注模式，请放入手机开始计时。",
+        }
 
     def _end_focus_mode(self, args: Dict) -> Dict:
         """
@@ -241,7 +247,8 @@ class ToolExecutor:
     def _open_phone_box(self, args: Dict) -> Dict:
         """
         临时暂停专注（打开手机盒）: FOCUSING -> PAUSED
-        流程: 暂停计时 -> 开盖 -> 等取走 -> 等放回 -> 关盖恢复
+        盒盖打开后，传感器子进程检测取走/放回，主循环分发状态转移。
+        超时由 StateController.pause_timeout_minutes 兜底。
         """
         reason = args.get("reason", "temporary")
 
@@ -249,27 +256,14 @@ class ToolExecutor:
             if not self.state.is_focusing:
                 return {"success": False, "result": "当前没有进行中的专注模式，无需暂停。"}
 
-            # 通过状态机暂停
             result = self.state.request_pause(reason)
             if not result["success"]:
                 return result
 
-            # 等待用户取走手机
-            self.ir_sensor.wait_for_phone_removed(timeout_seconds=30)
-
-            # 等待用户放回手机
-            phone_back = self.ir_sensor.wait_for_phone(timeout_seconds=120)
-            if not phone_back:
-                # 超时：自动结束专注
-                self.state.cancel_focus()
-                self.led.set_color("blue", "breath")
-                return {
-                    "success": True,
-                    "result": "好像很久没有放回手机，专注模式已自动结束。需要时再叫我哦。",
-                }
-
-            # 手机放回 -> 关盖恢复
-            return self.state.phone_inserted()
+            return {
+                "success": True,
+                "result": "盒盖已打开，请取走手机。用完后放回即可恢复专注。",
+            }
 
         else:
             # reason == "complete": 兼容旧的结束方式 -> 直接结束

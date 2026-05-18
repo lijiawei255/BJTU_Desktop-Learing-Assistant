@@ -125,17 +125,19 @@ class FaceTracker:
             error_x = face_cx - frame_cx
             error_y = face_cy - frame_cy
 
-            # 死区检查
+            # 死区检查 — PID setpoint=画面中心, measured=人脸中心
             if abs(error_x) > self.dead_x:
+                self.pan_pid.setpoint = frame_cx
                 pan_correction = self.pan_pid.update(face_cx)
                 self.current_pan = max(self.pan_range[0], min(self.pan_range[1],
-                                         self.current_pan + pan_correction * 0.05))
+                                         self.current_pan - pan_correction * 0.05))
                 self.pan_servo.set_angle(self.current_pan)
 
             if abs(error_y) > self.dead_y:
+                self.tilt_pid.setpoint = frame_cy
                 tilt_correction = self.tilt_pid.update(face_cy)
                 self.current_tilt = max(self.tilt_range[0], min(self.tilt_range[1],
-                                          self.current_tilt + tilt_correction * 0.05))
+                                          self.current_tilt - tilt_correction * 0.05))
                 self.tilt_servo.set_angle(self.current_tilt)
 
             return True
@@ -237,8 +239,8 @@ class DistractionDetector:
                     static_image_mode=False,
                     max_num_faces=1,
                     refine_landmarks=True,
-                    min_detection_confidence=0.5,
-                    min_tracking_confidence=0.5,
+                    min_detection_confidence=0.4,
+                    min_tracking_confidence=0.4,
                 )
             except ImportError:
                 logger.warning("MediaPipe not available — distraction detection disabled")
@@ -393,6 +395,10 @@ class CameraController:
         self.on_distracted: Optional[Callable[[str], None]] = None  # 走神回调
         self.on_face_found: Optional[Callable[[], None]] = None     # 重新捕捉回调
 
+        # 走神滤波计时
+        self._distraction_start: Optional[float] = None
+        self._last_distraction_alert: float = 0.0
+
         logger.info("CameraController created (OV5647 + MediaPipe)")
 
     def start(self):
@@ -433,7 +439,7 @@ class CameraController:
             self._face_cascade = cv2.CascadeClassifier(cascade_path)
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         faces = self._face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60)
         )
         return faces
 
@@ -447,24 +453,29 @@ class CameraController:
             logger.warning("Cannot track: no pan/tilt servos available")
             return
 
+        # 若摄像头硬件尚未初始化，先启动
+        if self._camera is None:
+            self.start()
+
         self.detector.reset()
-        self._running = True
         self._tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self._tracking_thread.start()
         logger.info("Tracking loop started")
 
     def stop_tracking(self):
-        """停止跟踪线程（专注模式结束时调用）"""
+        """停止跟踪线程（专注模式暂停/结束时调用）"""
+        self._running = False
         if self.tracker:
             self.tracker.stop()
         self.detector.reset()
+        logger.info("Tracking loop stopped")
 
     def _tracking_loop(self):
         """后台跟踪循环：间隔检测人脸 → PID跟踪 → 跳帧走神检测"""
         logger.info("Tracking loop running...")
         prev_lost = False
         frame_count = 0
-        detect_interval = config.get("vision.face_detection_interval", 3)
+        detect_interval = config.get("vision.face_detection_interval", 2)
         distract_interval = config.get("vision.distraction_interval_frames", 5)
         last_face_rect = None
 
@@ -473,6 +484,10 @@ class CameraController:
             if frame is None:
                 time.sleep(0.05)
                 continue
+
+            # 上下翻转：摄像头物理倒装，必须校正后人脸检测/MediaPipe才能正常工作
+            import cv2
+            frame = cv2.flip(frame, 0)
 
             frame_count += 1
 
@@ -493,14 +508,24 @@ class CameraController:
                         self.on_face_found()
                 prev_lost = not tracking
 
-            # ━━ 走神检测（跳帧降低CPU，每 distract_interval 帧一次） ━━
+            # ━━ 走神检测（跳帧 + 2秒连续滤波 + 15秒冷却） ━━
             if face_rect is not None and frame_count % distract_interval == 0:
+                now = time.time()
                 dist = self.detector.analyze(frame)
-                if dist["distracted"] and self.on_distracted:
-                    if dist["eyes_closed"]:
-                        self.on_distracted("eyes_closed")
-                    elif dist["looking_away"]:
-                        self.on_distracted("looking_away")
+                if dist["distracted"]:
+                    if self._distraction_start is None:
+                        self._distraction_start = now
+                    # 需持续2秒无中断 + 冷却15秒
+                    if (now - self._distraction_start >= 2.0 and
+                        now - self._last_distraction_alert > 15.0 and
+                        self.on_distracted):
+                        self._last_distraction_alert = now
+                        if dist["eyes_closed"]:
+                            self.on_distracted("eyes_closed")
+                        elif dist["looking_away"]:
+                            self.on_distracted("looking_away")
+                else:
+                    self._distraction_start = None  # 清醒则重置计时
 
             time.sleep(1.0 / self.fps)
 

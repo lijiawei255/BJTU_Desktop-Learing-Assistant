@@ -118,6 +118,10 @@ class TTSClient:
 
     def _playback_loop(self):
         """后台worker：从队列取句子→合成→播放，循环。若启用打断检测，被打断后停止。"""
+        if config.is_mock and config.mock_devices.get("audio"):
+            self._mock_playback_loop()
+            return
+
         import pyaudio
 
         self._pyaudio_instance = pyaudio.PyAudio()
@@ -168,6 +172,50 @@ class TTSClient:
         self._idle_event.set()
         logger.debug("TTS playback worker stopped")
 
+    def _mock_playback_loop(self):
+        """Mock播放循环：消费句子队列，不创建PyAudio实例，避免树莓派声卡竞争。"""
+        self._barge_triggered = False
+        logger.info("[MOCK] TTS playback worker started (no audio output)")
+
+        while self._playback_active:
+            try:
+                sentence = self._sentence_queue.get(timeout=0.3)
+            except queue.Empty:
+                if self._sentence_queue.empty():
+                    self._idle_event.set()
+                continue
+
+            if not self._playback_active:
+                break
+            if not sentence or not sentence.strip():
+                if self._sentence_queue.empty():
+                    self._idle_event.set()
+                continue
+
+            pcm_data = self.synthesize(sentence)
+            if not pcm_data or not self._playback_active:
+                if self._sentence_queue.empty():
+                    self._idle_event.set()
+                continue
+
+            interrupted = self._mock_play_pcm(pcm_data)
+            if interrupted:
+                self._barge_triggered = True
+                while not self._sentence_queue.empty():
+                    try:
+                        self._sentence_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                self._idle_event.set()
+                logger.info("[MOCK] TTS barge-in, stopping playback.")
+                break
+
+            if self._sentence_queue.empty():
+                self._idle_event.set()
+
+        self._idle_event.set()
+        logger.debug("[MOCK] TTS playback worker stopped")
+
     def _play_pcm(self, pcm_data: bytes) -> bool:
         """播放PCM数据，每chunk检查中断标志。
         若已启用打断检测，播放同时监听麦克风：连续6帧(180ms)语音活动即打断。
@@ -175,6 +223,9 @@ class TTSClient:
         Returns:
             True 如果被打断，False 如果正常播放完毕。
         """
+        if config.is_mock and config.mock_devices.get("audio"):
+            return self._mock_play_pcm(pcm_data)
+
         import pyaudio
 
         if not self._pyaudio_instance or not self._playback_active:
@@ -297,6 +348,17 @@ class TTSClient:
 
         barge_event.set()  # 信号监听线程退出
         return interrupted
+
+    def _mock_play_pcm(self, pcm_data: bytes) -> bool:
+        """Mock播放：根据PCM时长sleep模拟播放，不创建PyAudio实例。
+        PCM为16kHz 16bit mono → 32000字节/秒。
+        Returns False（Mock下永不被打断）。
+        """
+        bytes_per_second = self.output_sample_rate * 2  # 16kHz × 2 bytes = 32000
+        duration_sec = len(pcm_data) / max(bytes_per_second, 1)
+        logger.debug(f"[MOCK] Simulating playback: {duration_sec:.1f}s ({len(pcm_data)} bytes)")
+        time.sleep(duration_sec)
+        return False
 
     # ── 原有的直接合成/播放 API ──────────────────────────────────
 

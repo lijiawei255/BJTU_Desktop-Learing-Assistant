@@ -400,7 +400,19 @@ class WakeWordDetector:
             return False
 
     def _mock_listen(self) -> bool:
-        """Mock模式：终端输入模拟唤醒"""
+        """Mock模式：无头从队列获取，交互从终端输入模拟唤醒"""
+        from src.headless_input import headless_input
+        if headless_input.enabled:
+            user_input = headless_input.get_input("[MOCK WAKE]")
+            if not user_input:
+                logger.info("[MOCK] Headless wake: empty input → triggered")
+                return True
+            if user_input.strip().lower() in self.WAKE_WORDS:
+                logger.info("[MOCK] Headless wake: matching wake word → triggered")
+                return True
+            logger.info(f"[MOCK] Headless wake: '{user_input[:20]}' not a wake word")
+            return False
+
         try:
             user_input = input("[MOCK] 输入唤醒词后按 Enter（直接按Enter模拟触发）: ")
         except (EOFError, KeyboardInterrupt):
