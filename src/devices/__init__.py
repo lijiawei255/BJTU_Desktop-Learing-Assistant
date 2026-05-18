@@ -16,11 +16,11 @@ def get_pan_servo():
     if _is_mock("servo"):
         from .servo_mock import ServoMock
         return ServoMock("pan_servo",
-                         angle_min=config.get("servo.pan_angle_min", 30),
+                         angle_min=config.get("servo.pan_angle_min", 40),
                          angle_max=config.get("servo.pan_angle_max", 180))
     from .servo_controller import SingleServo
     return SingleServo(config.get("servo.pan_channel", 2), name="pan_servo",
-                       angle_min=config.get("servo.pan_angle_min", 30),
+                       angle_min=config.get("servo.pan_angle_min", 40),
                        angle_max=config.get("servo.pan_angle_max", 180))
 
 

@@ -125,17 +125,19 @@ class FaceTracker:
             error_x = face_cx - frame_cx
             error_y = face_cy - frame_cy
 
-            # 死区检查
+            # 死区检查 — PID setpoint=画面中心, measured=人脸中心
             if abs(error_x) > self.dead_x:
+                self.pan_pid.setpoint = frame_cx
                 pan_correction = self.pan_pid.update(face_cx)
                 self.current_pan = max(self.pan_range[0], min(self.pan_range[1],
-                                         self.current_pan + pan_correction * 0.05))
+                                         self.current_pan - pan_correction * 0.05))
                 self.pan_servo.set_angle(self.current_pan)
 
             if abs(error_y) > self.dead_y:
+                self.tilt_pid.setpoint = frame_cy
                 tilt_correction = self.tilt_pid.update(face_cy)
                 self.current_tilt = max(self.tilt_range[0], min(self.tilt_range[1],
-                                          self.current_tilt + tilt_correction * 0.05))
+                                          self.current_tilt - tilt_correction * 0.05))
                 self.tilt_servo.set_angle(self.current_tilt)
 
             return True

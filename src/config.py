@@ -88,10 +88,10 @@ DEFAULT_CONFIG = {
         "dead_zone_y": 30,
         "pan_pid": {"kp": 0.08, "ki": 0.01, "kd": 0.02},
         "tilt_pid": {"kp": 0.06, "ki": 0.008, "kd": 0.015},
-        "pan_range": [30, 180],     # 云台限位：水平≥30°
+        "pan_range": [40, 180],     # 云台限位：水平≥40°
         "tilt_range": [0, 140],     # 云台限位：俯仰≤140°
         "default_pan_angle": 90,
-        "default_tilt_angle": 45,
+        "default_tilt_angle": 80,
         "face_lost_timeout": 10,
         "search_timeout": 3,
         "scan_step_degrees": 5,
@@ -135,7 +135,7 @@ DEFAULT_CONFIG = {
         "tilt_channel": 3,
         "min_pulse_us": 500,
         "max_pulse_us": 2400,  # SG90标准：500-2400μs → 0-180°
-        "pan_angle_min": 30,   # 云台水平限位（防止连接线拉扯）
+        "pan_angle_min": 40,   # 云台水平限位（防止连接线拉扯）
         "pan_angle_max": 180,
         "tilt_angle_min": 0,
         "tilt_angle_max": 140,  # 云台俯仰限位（防止连接线拉扯）
