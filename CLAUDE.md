@@ -179,6 +179,16 @@ Key config: `servo.min_pulse_us=500`, `servo.max_pulse_us=2400` (SG90 standard),
 and TOF (I2C 0x29) hardware. Main process only receives PHONE_DETECTED/PHONE_REMOVED messages
 via MessageBus — never reads GPIO directly. This avoids multi-process GPIO conflicts.
 
+**GPIO Conflicts** (RPi 5 Bookworm defaults):
+- GPIO23 may be claimed by `dtoverlay=gpio-ir` (IR remote receiver). Disable in `/boot/firmware/config.txt`:
+  `#dtoverlay=gpio-ir,gpio_pin=23`
+- GPIO17 may be claimed by `dtoverlay=uart0,ctsrts` (UART RTS). Change to:
+  `dtoverlay=uart0`
+- After editing config.txt, run `sudo reboot` and verify with `pinctrl 17,23`
+
+**`.env` priority**: `ENABLE_MOCK=true` in `.env` overrides `config.json` mock.enabled. During real
+hardware testing, comment out or set to `false` in `.env`.
+
 ## Mock Mode
 
 Default: all hardware mocked. Edit `data/config.json`:
