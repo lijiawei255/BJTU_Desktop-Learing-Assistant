@@ -34,8 +34,8 @@ DEFAULT_CONFIG = {
         "wake_cooldown_seconds": 5,
         "wake_confirm_ms": 1500,
         "wake_asr_streaming": True,
-        "conversation_timeout_seconds": 10,
-        "barge_in_enabled": True,
+        "conversation_timeout_seconds": 6,
+        "barge_in_enabled": False,
         "wake_word_fuzzy_threshold": 0.6,
     },
     "llm": {

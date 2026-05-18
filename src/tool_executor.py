@@ -50,6 +50,9 @@ class ToolExecutor:
         # ── 用户称呼 ──
         self.user_nickname = config.get("system.nickname", "博士")
 
+        # ── 语音客户端引用（由 main.py 注入） ──
+        self.tts = None
+
         logger.info("ToolExecutor 初始化完成 (M7 StateController 集成)")
 
     # ═══════════════════════════════════════════════════════════
@@ -158,11 +161,23 @@ class ToolExecutor:
     # ═══════════════════════════════════════════════════════════
 
     def _on_distraction(self, reason: str):
-        """走神检测回调（由摄像头跟踪线程调用）"""
-        if reason == "eyes_closed":
-            logger.info("走神检测: 闭眼")
-        elif reason == "looking_away":
-            logger.info("走神检测: 视线偏离")
+        """走神检测回调（由摄像头跟踪线程调用，2秒滤波后触发）"""
+        logger.info(f"走神检测: {reason} — 播放提醒语音")
+        import threading
+        threading.Thread(
+            target=lambda: self._speak_alert("博士，现在还不可以休息哦！"),
+            daemon=True
+        ).start()
+
+    def _speak_alert(self, text: str):
+        """播放提醒语音（独立线程，复用共享TTS实例避免音频竞争）"""
+        try:
+            if self.tts:
+                self.tts.speak(text)
+            else:
+                logger.warning("TTS未注入，无法播放提醒")
+        except Exception as e:
+            logger.warning(f"提醒播放失败: {e}")
 
     # ═══════════════════════════════════════════════════════════
     # 工具调度器 — LLM Function Calling 入口

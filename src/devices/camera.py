@@ -395,6 +395,10 @@ class CameraController:
         self.on_distracted: Optional[Callable[[str], None]] = None  # 走神回调
         self.on_face_found: Optional[Callable[[], None]] = None     # 重新捕捉回调
 
+        # 走神滤波计时
+        self._distraction_start: Optional[float] = None
+        self._last_distraction_alert: float = 0.0
+
         logger.info("CameraController created (OV5647 + MediaPipe)")
 
     def start(self):
@@ -495,14 +499,24 @@ class CameraController:
                         self.on_face_found()
                 prev_lost = not tracking
 
-            # ━━ 走神检测（跳帧降低CPU，每 distract_interval 帧一次） ━━
+            # ━━ 走神检测（跳帧 + 2秒连续滤波 + 15秒冷却） ━━
             if face_rect is not None and frame_count % distract_interval == 0:
+                now = time.time()
                 dist = self.detector.analyze(frame)
-                if dist["distracted"] and self.on_distracted:
-                    if dist["eyes_closed"]:
-                        self.on_distracted("eyes_closed")
-                    elif dist["looking_away"]:
-                        self.on_distracted("looking_away")
+                if dist["distracted"]:
+                    if self._distraction_start is None:
+                        self._distraction_start = now
+                    # 需持续2秒无中断 + 冷却15秒
+                    if (now - self._distraction_start >= 2.0 and
+                        now - self._last_distraction_alert > 15.0 and
+                        self.on_distracted):
+                        self._last_distraction_alert = now
+                        if dist["eyes_closed"]:
+                            self.on_distracted("eyes_closed")
+                        elif dist["looking_away"]:
+                            self.on_distracted("looking_away")
+                else:
+                    self._distraction_start = None  # 清醒则重置计时
 
             time.sleep(1.0 / self.fps)
 

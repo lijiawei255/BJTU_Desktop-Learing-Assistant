@@ -50,6 +50,7 @@ class AmiyaSystem:
         self._running = True
         self._consecutive_errors = 0
         self._degraded_until = 0.0
+        self._last_posture_alert = 0.0  # 坐姿提醒冷却
         signal.signal(signal.SIGINT, self._handle_signal)
 
         # M8: 消息总线 + 关闭信号
@@ -123,6 +124,17 @@ class AmiyaSystem:
                 distance = msg.payload.get("distance_mm", 0)
                 logger.debug(f"[Sensor] TOF distance: {distance}mm")
 
+            elif msg.type == MessageType.POSTURE_WARNING:
+                recovered = msg.payload.get("recovered", False)
+                if not recovered and time.time() - self._last_posture_alert > 30:
+                    logger.info(f"[Sensor] 坐姿警告: {msg.payload.get('distance_mm')}mm")
+                    self._last_posture_alert = time.time()
+                    import threading
+                    threading.Thread(
+                        target=lambda: tool_executor._speak_alert("博士，离桌面太近了哦！"),
+                        daemon=True
+                    ).start()
+
             elif msg.type == MessageType.HEARTBEAT:
                 logger.debug(f"[Sensor] Heartbeat from {msg.source}")
 
@@ -152,11 +164,12 @@ class AmiyaSystem:
         memory = MemoryManager()
         dialog._memory = memory
         tool_executor = ToolExecutor()
+        tool_executor.tts = tts  # 注入TTS供走神/坐姿提醒使用
 
         # M8: 启动传感器进程
         self._start_sensor_process()
 
-        CONVERSATION_TIMEOUT = config.get("audio.conversation_timeout_seconds", 10)
+        CONVERSATION_TIMEOUT = config.get("audio.conversation_timeout_seconds", 6)
         SILENCE_TURNS_LIMIT = 2
         MAX_ERRORS = config.get("error_handling.max_consecutive_errors", 5)
         ERROR_COOLDOWN = config.get("error_handling.error_cooldown_seconds", 5)
