@@ -463,10 +463,12 @@ class CameraController:
         logger.info("Tracking loop started")
 
     def stop_tracking(self):
-        """停止跟踪线程（专注模式结束时调用）"""
+        """停止跟踪线程（专注模式暂停/结束时调用）"""
+        self._running = False
         if self.tracker:
             self.tracker.stop()
         self.detector.reset()
+        logger.info("Tracking loop stopped")
 
     def _tracking_loop(self):
         """后台跟踪循环：间隔检测人脸 → PID跟踪 → 跳帧走神检测"""
@@ -482,6 +484,10 @@ class CameraController:
             if frame is None:
                 time.sleep(0.05)
                 continue
+
+            # 上下翻转：摄像头物理倒装，必须校正后人脸检测/MediaPipe才能正常工作
+            import cv2
+            frame = cv2.flip(frame, 0)
 
             frame_count += 1
 

@@ -82,7 +82,7 @@ DEFAULT_CONFIG = {
         "camera_width": 640,
         "camera_height": 480,
         "fps": 15,
-        "face_detection_interval": 2,
+        "face_detection_interval": 1,
         "face_confidence_threshold": 0.5,
         "dead_zone_x": 40,
         "dead_zone_y": 30,
