@@ -32,9 +32,12 @@ def _get_controller():
 class SingleServo:
     """单个SG90舵机控制器，封装一个PCA9685通道，接口与ServoMock一致"""
 
-    def __init__(self, channel: int, name: str = "servo"):
+    def __init__(self, channel: int, name: str = "servo",
+                 angle_min: float = 0.0, angle_max: float = 180.0):
         self.name = name
         self._channel = channel
+        self._angle_min = angle_min
+        self._angle_max = angle_max
         self._kit = _get_controller()
         self._servo = self._kit.servo[channel]
         try:
@@ -42,12 +45,13 @@ class SingleServo:
         except Exception:
             self.current_angle = 90.0
         logger.info(
-            f"Servo '{name}' on channel {channel} initialized at {self.current_angle:.1f}°"
+            f"Servo '{name}' on channel {channel} initialized at {self.current_angle:.1f}° "
+            f"(limit: {angle_min}°-{angle_max}°)"
         )
 
     def set_angle(self, angle: float):
-        """设置角度 0-180°，含运动时间模拟"""
-        angle = max(0, min(180, angle))
+        """设置角度（自动钳位到限位范围），含运动时间模拟"""
+        angle = max(self._angle_min, min(self._angle_max, angle))
         move_time = abs(angle - self.current_angle) / 90.0
         if move_time > 0:
             time.sleep(min(move_time, 2.0))
