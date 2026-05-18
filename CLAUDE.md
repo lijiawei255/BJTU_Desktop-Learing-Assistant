@@ -189,6 +189,14 @@ via MessageBus — never reads GPIO directly. This avoids multi-process GPIO con
 **`.env` priority**: `ENABLE_MOCK=true` in `.env` overrides `config.json` mock.enabled. During real
 hardware testing, comment out or set to `false` in `.env`.
 
+**Camera Setup** (RPi):
+- picamera2 MUST use system apt package (`python3-picamera2`), NOT pip version. Link into venv:
+  `ln -sf /usr/lib/python3/dist-packages/picamera2 $VENV/site-packages/`
+- CSI camera auto-detected via `camera_auto_detect=1` in config.txt
+- Face tracking: OpenCV Haar Cascade (fast) + MediaPipe Face Mesh (precise landmarks)
+- MediaPipe confidence: 0.4 (optimized for indoor lighting)
+- Face detection interval: every 2 frames, distraction check: every 2 frames
+
 ## Mock Mode
 
 Default: all hardware mocked. Edit `data/config.json`:

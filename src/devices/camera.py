@@ -239,8 +239,8 @@ class DistractionDetector:
                     static_image_mode=False,
                     max_num_faces=1,
                     refine_landmarks=True,
-                    min_detection_confidence=0.5,
-                    min_tracking_confidence=0.5,
+                    min_detection_confidence=0.4,
+                    min_tracking_confidence=0.4,
                 )
             except ImportError:
                 logger.warning("MediaPipe not available — distraction detection disabled")
@@ -435,7 +435,7 @@ class CameraController:
             self._face_cascade = cv2.CascadeClassifier(cascade_path)
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         faces = self._face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60)
         )
         return faces
 
@@ -466,7 +466,7 @@ class CameraController:
         logger.info("Tracking loop running...")
         prev_lost = False
         frame_count = 0
-        detect_interval = config.get("vision.face_detection_interval", 3)
+        detect_interval = config.get("vision.face_detection_interval", 2)
         distract_interval = config.get("vision.distraction_interval_frames", 5)
         last_face_rect = None
 
