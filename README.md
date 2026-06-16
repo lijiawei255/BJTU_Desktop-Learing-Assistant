@@ -4,7 +4,7 @@
 
 Amiya is an AI voice companion device for students, built around LLM voice interaction with integrated phone storage management, posture monitoring, and distraction tracking.
 
-> **Status**: Milestone 9 complete — Voice interaction optimizations (shorter wait, wake-word-gated barge-in, fuzzy wake word detection). Runs out of the box on PC in mock mode (no hardware required). Target deployment: Raspberry Pi 5.
+> **Status**: Milestone 10 complete — Hardware real-device testing (full-stack hardware integration, camera tracking & distraction detection, servo limit calibration & driver tuning). Runs out of the box on PC in mock mode (no hardware required). Target deployment: Raspberry Pi 5.
 
 ## Features
 
@@ -170,8 +170,11 @@ To test with a real microphone on PC, edit `data/config.json` and set `"audio": 
 │   ├── tts_client.py            # Bailian TTS speech synthesis (with barge-in)
 │   ├── audio_handler.py         # PyAudio recording / playback
 │   ├── vad_handler.py           # WebRTC voice activity detection
-│   ├── wake_word_detector.py    # VAD + ASR wake word detection (8 variants)
+│   ├── wake_word_detector.py    # VAD + ASR wake word detection (20+ variants)
 │   ├── text_sanitizer.py        # LLM output text cleaner
+│   ├── message_bus.py           # Message bus (IPC communication, 25 message types)
+│   ├── state_controller.py      # Focus mode state machine (FocusState / SystemState)
+│   ├── memory_manager.py        # Cross-session memory (summaries, nickname, preferences)
 │   ├── sentence_splitter.py     # Streaming sentence segmentation (for streaming TTS)
 │   ├── devices/                 # Hardware driver layer
 │   │   ├── __init__.py          # Device factory (mock/real routing)
@@ -185,11 +188,11 @@ To test with a real microphone on PC, edit `data/config.json` and set `"audio": 
 │   │   ├── led_controller.py    # GPIO PWM LED real driver
 │   │   ├── camera.py            # OV5647 camera (PID tracking + MediaPipe distraction)
 │   │   └── gpio_button.py       # GPIO physical button + mock
-│   ├── processes/               # Subprocess modules (reserved for M8)
+│   ├── processes/               # Sensor / vision / device subprocesses
 │   ├── utils/                   # Logger, retry utilities
 │   └── models/                  # Reserved for future local models
 ├── system_prompts/              # Amiya character persona prompt
-├── tests/                       # Tests (28 M5 device tests + pipeline integration)
+├── tests/                       # Tests (full M2-M9 pipeline: devices, memory, state machine, wake word, headless)
 ├── docs/                        # Development documentation (Chinese)
 ├── data/                        # Runtime data (config.json is gitignored)
 ├── logs/                        # Log files (gitignored)
@@ -228,11 +231,12 @@ To test with a real microphone on PC, edit `data/config.json` and set `"audio": 
 | M7 | Focus mode state machine | ✅ Done |
 | M8 | Multi-process framework + sensor process | ✅ Done |
 | M9 | Voice interaction: shorter timeout, wake-word barge-in, fuzzy wake word | ✅ Done |
-| Phase 2 | Raspberry Pi hardware integration | 📋 Planned |
+| M10 | Hardware real-device testing: full-stack hardware integration, camera tracking & distraction, servo limit calibration | ✅ Done |
+| Phase 2 | Raspberry Pi hardware integration & optimization | 🔄 In Progress |
 
 ## Contributing
 
-- **Branch model**: `main` (stable) → `develop` (integration) → `feature/xxx` (feature branches)
+- **Branch model**: `main` (stable) ← `feature/xxx` (feature branches)
 - **Commit prefixes**: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`
 - `.env` and `data/config.json` are gitignored — never commit them
 - Update `requirements*.txt` when adding/removing dependencies
