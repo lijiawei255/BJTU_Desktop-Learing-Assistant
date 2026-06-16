@@ -4,7 +4,7 @@
 
 桌面学习助手"阿米娅（Amiya）"——面向学生的 AI 语音陪伴设备，以大模型语音交互为核心，集成手机收纳管理、坐姿监测、走神追踪等功能。
 
-> 当前阶段：**里程碑9已完成**（语音交互优化 — 缩短等待时间、唤醒词门控打断、模糊唤醒词检测）。PC Mock 模式开箱即用，无需任何硬件。目标部署平台：树莓派 5。
+> 当前阶段：**里程碑10已完成**（硬件真实测试 — 全流程硬件联动、摄像头跟踪与走神检测、舵机限位与驱动调优）。PC Mock 模式开箱即用，无需任何硬件。目标部署平台：树莓派 5。
 
 ## 功能一览
 
@@ -171,8 +171,11 @@ python -m pytest tests/ -v
 │   ├── tts_client.py            # 百炼 TTS 语音合成（支持 barge-in 打断）
 │   ├── audio_handler.py         # PyAudio 音频采集 / 播放
 │   ├── vad_handler.py           # WebRTC VAD 语音活动检测
-│   ├── wake_word_detector.py    # VAD + ASR 唤醒词检测（8个变体）
+│   ├── wake_word_detector.py    # VAD + ASR 唤醒词检测（20+个变体）
 │   ├── text_sanitizer.py        # LLM 输出文本清洗
+│   ├── message_bus.py           # 消息总线（IPC 通信 + 25 种消息类型）
+│   ├── state_controller.py      # 专注模式状态机（FocusState / SystemState）
+│   ├── memory_manager.py        # 跨会话记忆管理（摘要/昵称/偏好）
 │   ├── sentence_splitter.py     # 流式句子分割（用于流式 TTS）
 │   ├── devices/                 # 硬件驱动层
 │   │   ├── __init__.py          # 设备管理器（Mock/Real 路由工厂函数，10个）
@@ -186,11 +189,11 @@ python -m pytest tests/ -v
 │   │   ├── led_controller.py    # GPIO PWM LED 真实驱动
 │   │   ├── camera.py            # OV5647 摄像头（PID跟踪 + MediaPipe走神检测）
 │   │   └── gpio_button.py       # GPIO 物理按钮 + Mock
-│   ├── processes/               # 子进程模块（M8 预留）
+│   ├── processes/               # 传感器/视觉/外设子进程
 │   ├── utils/                   # 日志、重试工具
 │   └── models/                  # 空包（预留给未来本地模型）
 ├── system_prompts/              # Amiya 角色人格提示词
-├── tests/                       # 测试（28个M5设备测试 + pipeline集成测试）
+├── tests/                       # 测试（包含 M2-M9 全链路测试：管道/设备/记忆/状态机/唤醒词/无头集成）
 ├── docs/                        # 开发文档
 ├── data/                        # 运行时数据（config.json 已 gitignore）
 ├── logs/                        # 日志（已 gitignore）
@@ -229,12 +232,13 @@ python -m pytest tests/ -v
 | M7 | 专注模式状态机 | ✅ 完成 |
 | M8 | 多进程框架 + 传感器进程 | ✅ 完成 |
 | M9 | 语音交互优化：缩短等待、唤醒词打断、模糊唤醒词检测 | ✅ 完成 |
-| 阶段二 | 树莓派硬件联调 | 📋 计划中 |
+| M10 | 硬件真实测试：全流程硬件联动、摄像头跟踪与走神检测、舵机限位与驱动调优 | ✅ 完成 |
+| 阶段二 | 树莓派硬件联调与功能优化 | 🔄 进行中 |
 
 ## 开发协作
 
 ### 分支模型
-`main`（稳定）→ `develop`（集成分支）→ `feature/xxx`（功能分支）
+`main`（稳定）← `feature/xxx`（功能分支）
 
 ### 提交前缀
 `feat:` / `fix:` / `docs:` / `test:` / `mock:` / `refactor:`
