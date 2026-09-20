@@ -142,7 +142,12 @@ class TestDeviceManager:
 class TestToolExecutor:
     def setup_method(self):
         self.tools = ToolExecutor()
-        # Mock IR默认自动检测成功，确保测试快速通过
+
+    def start_focusing(self, minutes=25):
+        assert self.tools.execute("set_focus_mode", {"duration_minutes": minutes})["success"]
+        assert self.tools.state_ctrl.state_name == "WAITING_PHONE"
+        assert self.tools.state_ctrl.phone_inserted()["success"]
+        assert self.tools.state_ctrl.is_focusing
 
     def test_set_focus_mode(self):
         result = self.tools.execute("set_focus_mode", {"duration_minutes": 25})
@@ -151,21 +156,22 @@ class TestToolExecutor:
         assert self.tools.state_ctrl.is_active is True
 
     def test_open_phone_box_temporary(self):
-        self.tools.execute("set_focus_mode", {"duration_minutes": 25})
-        # 暂停：mock IR自动模拟 取走→放回，所以会完整走完暂停→恢复流程
+        self.start_focusing()
         result = self.tools.execute("open_phone_box", {"reason": "temporary"})
         assert result["success"] is True
-        # 自动恢复后 is_paused 为 False
+        assert self.tools.state_ctrl.is_paused is True
+        assert self.tools.state_ctrl.phone_inserted()["success"]
         assert self.tools.state_ctrl.is_paused is False
+        assert self.tools.state_ctrl.is_focusing
 
     def test_open_phone_box_complete(self):
-        self.tools.execute("set_focus_mode", {"duration_minutes": 25})
+        self.start_focusing()
         result = self.tools.execute("open_phone_box", {"reason": "complete"})
         assert result["success"] is True
         assert self.tools.state_ctrl.is_active is False
 
     def test_end_focus_mode(self):
-        self.tools.execute("set_focus_mode", {"duration_minutes": 25})
+        self.start_focusing()
         result = self.tools.execute("end_focus_mode", {})
         assert result["success"] is True
         assert self.tools.state_ctrl.is_active is False
@@ -177,7 +183,7 @@ class TestToolExecutor:
         assert result["success"] is False
 
     def test_set_focus_mode_conflict(self):
-        self.tools.execute("set_focus_mode", {"duration_minutes": 25})
+        self.start_focusing()
         result = self.tools.execute("set_focus_mode", {"duration_minutes": 10})
         assert result["success"] is False
         assert "当前专注模式还在进行中" in result["result"]
@@ -186,10 +192,10 @@ class TestToolExecutor:
     def test_get_focus_status_inactive(self):
         result = self.tools.execute("get_focus_status", {})
         assert result["success"] is True
-        assert "未开启" in result["result"]
+        assert result["result"] == "当前没有进行专注模式。"
 
     def test_get_focus_status_active(self):
-        self.tools.execute("set_focus_mode", {"duration_minutes": 30})
+        self.start_focusing(30)
         result = self.tools.execute("get_focus_status", {})
         assert result["success"] is True
         assert "30分" in result["result"] or "专注中" in result["result"]
@@ -199,9 +205,9 @@ class TestToolExecutor:
         assert "未开启" in status
 
     def test_get_status_for_llm_active(self):
-        self.tools.execute("set_focus_mode", {"duration_minutes": 25})
+        self.start_focusing()
         status = self.tools.get_status_for_llm()
-        assert "专注中" in status
+        assert "专注模式进行中" in status
 
     def test_set_user_nickname(self):
         result = self.tools.execute("set_user_nickname", {"nickname": "博士"})

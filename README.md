@@ -91,10 +91,23 @@ In mock mode, you interact with Amiya through the **text console**:
 ### 6. Run tests (optional)
 
 ```bash
+# Default: offline PC tests; no .env, real API key, or hardware required
 python -m pytest tests/ -v
+
+# Explicit cloud API tests (real key required; may incur charges; no hardware)
+python -m pytest tests/ --run-api -m api -v
+
+# Explicit real-audio test, only with a microphone and speakers available
+python -m pytest tests/test_real_audio.py --run-hardware -v
 ```
 
-**Expected**: All tests pass (28 M5 device tests + pipeline integration tests + audio device test).
+On Windows, use `scripts\run_headless_tests.bat`; add `--api` to enable cloud tests. The script propagates pytest's failure exit code.
+
+Tests use isolated temporary configuration, memory, and audio output directories. Network access and real device imports are blocked by default; local configuration and memory are not overwritten. Main-loop tests use scripted LLM/ASR responses to verify orchestration, rather than repeating the Raspberry Pi system validation.
+
+**The hardware validation result is unchanged: the project has been tested on the real Raspberry Pi with the complete hardware system, achieving all intended functionality. M10 remains complete.** This PC-only work updates tests and documentation; production code, hardware parameters, and Raspberry Pi dependencies are unchanged.
+
+Read the actual pytest summary, distinguishing `passed`, `skipped`, and `xfailed`. Deferred issues exposed by offline edge cases have strict `xfail` tests and are not counted as passes. Unexpected passes also fail the run so the expectation is reviewed. See the [PC testing agreement](docs/协作者方法.md#28-电脑端测试与验证范围) for reasons and scope. Use `--runxfail` to report these cases as ordinary failures. Failures in outdated tests do not invalidate the completed hardware validation.
 
 ## Mock Mode
 
@@ -192,7 +205,11 @@ To test with a real microphone on PC, edit `data/config.json` and set `"audio": 
 │   ├── utils/                   # Logger, retry utilities
 │   └── models/                  # Reserved for future local models
 ├── system_prompts/              # Amiya character persona prompt
-├── tests/                       # Tests (full M2-M9 pipeline: devices, memory, state machine, wake word, headless)
+├── tests/                       # Offline tests + explicitly enabled cloud API / real audio tests
+│   ├── conftest.py              # Temporary config, network/device guards, worker cleanup
+│   ├── test_test_isolation.py   # Isolation checks and deferred Mock cleanup cases
+│   └── test_windows_test_runner.py # Batch arguments and exit codes (other tests omitted)
+├── pytest.ini                  # Test discovery, markers, and failure warning rules
 ├── docs/                        # Development documentation (Chinese)
 ├── data/                        # Runtime data (config.json is gitignored)
 ├── logs/                        # Log files (gitignored)

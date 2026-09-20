@@ -92,10 +92,23 @@ Mock 模式下通过**文本控制台**与 Amiya 交互：
 ### 6. 运行测试（可选）
 
 ```bash
+# 默认：电脑离线测试，不需要 .env、真实 API Key 或硬件
 python -m pytest tests/ -v
+
+# 显式运行云 API 测试（需要真实 Key，可能产生费用；仍不使用硬件）
+python -m pytest tests/ --run-api -m api -v
+
+# 仅在麦克风、扬声器可用时显式运行真实音频测试
+python -m pytest tests/test_real_audio.py --run-hardware -v
 ```
 
-**预期**：全部测试通过（28 个 M5 设备测试 + 管道集成测试 + 音频设备测试）。
+Windows 可使用 `scripts\run_headless_tests.bat`，加 `--api` 显式启用云测试；脚本会传递 pytest 的失败退出码。
+
+测试使用独立的临时配置、记忆和音频输出目录，默认阻止网络与真实设备导入，不覆盖本地配置或记忆。主循环测试使用固定的 LLM/ASR 响应；它验证程序编排，不代表本轮重新做了树莓派整机测试。
+
+**硬件验证结论保持不变：项目已在真实树莓派及完整硬件系统上验证，能够实现预期的全部功能，M10 已完成。** 当前电脑端工作只完善测试与文档，正式运行代码、硬件参数和树莓派依赖未改动。
+
+查看 pytest 的实际汇总，分别记录 `passed`、`skipped` 和 `xfailed`。部分离线边界用例暴露的待处理问题保留为严格 `xfail`，不算通过；意外通过也会使测试失败，提醒重新评估。原因与范围见[电脑端测试约定](docs/协作者方法.md#28-电脑端测试与验证范围)。需要将这些问题显示为普通失败时使用 `--runxfail`。不要因旧测试失败而撤销已有硬件验证结论。
 
 ## Mock 模式说明
 
@@ -193,7 +206,11 @@ python -m pytest tests/ -v
 │   ├── utils/                   # 日志、重试工具
 │   └── models/                  # 空包（预留给未来本地模型）
 ├── system_prompts/              # Amiya 角色人格提示词
-├── tests/                       # 测试（包含 M2-M9 全链路测试：管道/设备/记忆/状态机/唤醒词/无头集成）
+├── tests/                       # 离线测试 + 显式启用的云 API / 真实音频测试
+│   ├── conftest.py              # 临时配置、网络/设备隔离、后台线程清理
+│   ├── test_test_isolation.py   # 测试隔离验证及 Mock 清理待处理用例
+│   └── test_windows_test_runner.py # Windows 脚本参数和退出码验证（其余测试略）
+├── pytest.ini                  # 测试发现、标记与失败警告规则
 ├── docs/                        # 开发文档
 ├── data/                        # 运行时数据（config.json 已 gitignore）
 ├── logs/                        # 日志（已 gitignore）

@@ -10,7 +10,7 @@
 # Run main app (mock mode — no hardware needed)
 python -m src.main
 
-# Run all tests
+# Default offline PC suite (no real API key or hardware required)
 python -m pytest tests/ -v
 
 # Run M5 device tests only
@@ -22,14 +22,17 @@ python -m src.main
 # Code formatting
 black src/ tests/
 
-# Run headless mock integration tests (no hardware, no human)
-python -m pytest tests/test_headless_integration.py -v -m "not api"
+# Run headless integration tests with scripted LLM/ASR (no network/hardware)
+python -m pytest tests/test_headless_integration.py -v
 
-# Run headless tests on RPi via SSH
-bash scripts/run_headless_tests.sh
+# Windows test runner (propagates pytest exit code)
+scripts\run_headless_tests.bat
 
-# Run headless tests with API-dependent tests
-bash scripts/run_headless_tests.sh --api
+# Explicit opt-in for cloud API tests (real key required; may incur charges)
+python -m pytest tests/ --run-api -m api -v
+
+# Explicit opt-in for real microphone/speaker tests
+python -m pytest tests/test_real_audio.py --run-hardware -v
 ```
 
 ## Architecture
@@ -125,6 +128,10 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
   ```
 - 新增功能应补充测试（在 `tests/` 目录中）
 - 测试失败时修复代码或更新测试，**不允许**跳过测试提交
+- 默认离线测试通过 `tests/conftest.py` 使用临时配置和数据、阻止网络与真实设备导入、清理模拟后台线程。测试不得覆盖用户的 `data/config.json` 或记忆，也不得依赖本机 `.env`。
+- `api` / `hardware` 标记必须分别搭配 `--run-api` / `--run-hardware` 显式启用；单独 `-m api` 不会放开网络。
+- 对本轮明确暂缓的运行时问题，保留正确断言并使用带原因、限定异常类型的严格 `xfail`；不能跳过执行或改成接受错误结果。汇报时单独列出，意外通过必须检查。清单见 `docs/协作者方法.md` 的 2.8 节。
+- 项目已在真实树莓派及完整硬件系统验证全部预期功能，M10 完成结论不变。当前只在电脑验证测试与文档改动，不改 `src`、树莓派部署设置、硬件参数或依赖；不因离线边界用例撤销已有整机验证结论。
 
 ---
 
@@ -159,10 +166,16 @@ Hardware Layer:  Device Manager (__init__.py) → Mock or Real drivers
 - `src/wake_word_detector.py` — Wake word detection with fuzzy matching + barge-in gating (M9). `listen_for_wake_word()` blocks in VAD loop — sensor checker background thread compensates.
 - `src/headless_input.py` — Headless mock input system for automated testing (queue-based, replaces stdin)
 - `system_prompts/amiya_persona.txt` — Persona + tool-calling rules (Rule 13: mandatory function calls for focus/pause/status operations)
-- `tests/test_headless_integration.py` — Comprehensive headless mock integration tests (32 non-API + 5 API)
+- `pytest.ini` — Test discovery restricted to tests/, explicit markers, invalid test returns/thread errors fail the run
+- `tests/conftest.py` — PC test isolation, opt-in flags, and test-owned worker cleanup
+- `tests/test_headless_integration.py` — Offline headless tests, including scripted main-loop conversations
+- `tests/test_m2_m4_pipeline.py` — Separate offline component assertions and opt-in cloud API tests
+- `tests/test_real_audio.py` — Explicit hardware-marked microphone/speaker test
+- `tests/test_test_isolation.py` — Isolation checks and strict xfail cases for unchanged Mock cleanup gaps
+- `tests/test_windows_test_runner.py` — Batch arguments and exit codes, using a fake Python command
 - `scripts/camera_demo.py` — Standalone camera+servo demo for presentation recording
-- `scripts/run_headless_tests.sh` — Automated test runner for RPi/Linux
-- `scripts/run_headless_tests.bat` — Automated test runner for Windows
+- `scripts/run_headless_tests.sh` — Legacy RPi/Linux runner, unchanged in this PC-only work; its --api does not supply the new --run-api opt-in. Use the explicit pytest commands above for the updated test suite.
+- `scripts/run_headless_tests.bat` — Windows offline suite; --api opts into cloud tests; returns pytest exit status
 - `.rpi_connection` — RPi connection info (gitignored, contains IP/user)
 - `docs/ClaudeCode_开发实操手册.md` — Full development manual with M6-M10 specs
 
@@ -218,8 +231,9 @@ When `mock.headless` is `null` (auto) or `true`, the system replaces all `input(
 thread-safe `queue.Queue`-based input feeder. Detection: config flag > `sys.stdin.isatty()`.
 
 - **Auto-detect**: Pytest/SSH pipe → headless; Terminal → interactive
-- **Force headless**: Set `"headless": true` in config.json
-- **API tests**: Marked with `@pytest.mark.api`, use `-m "not api"` to skip
+- **Force headless**: For the application, set `"headless": true` in config.json; pytest sets this only in isolated test state
+- **API tests**: Marked with `@pytest.mark.api`; require `--run-api` to run (and a real key)
+- **Hardware tests**: Marked with `@pytest.mark.hardware`; require `--run-hardware` to run
 - **RPi safety**: Mock audio mode prevents PyAudio from being imported/initialized
 
 ## API Key Setup
