@@ -2,10 +2,9 @@
 
 用法：
   # 运行所有非API测试
-  python -m pytest tests/test_headless_integration.py -v -m "not api"
-
-  # 运行包括API的完整测试
   python -m pytest tests/test_headless_integration.py -v
+
+  # 云API测试位于 test_m2_m4_pipeline.py，需显式 --run-api
 
 所有测试在 mock.enabled=true + mock.headless=true 下运行。
 """
@@ -15,17 +14,6 @@ import time
 import pytest
 from src.config import config
 from src.headless_input import headless_input
-
-
-@pytest.fixture(autouse=True)
-def setup_headless():
-    """每个测试前：启用Mock + 无头模式，清空输入队列。"""
-    config.set("mock.enabled", True)
-    config.set("mock.headless", True)
-    config.set("mock.audio", True)
-    headless_input.clear()
-    yield
-    headless_input.clear()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -82,32 +70,39 @@ class TestHeadlessInput:
 class TestTTSMockPlaybackWorker:
     """验证Mock模式下TTS播放不创建PyAudio实例 — 这是树莓派声卡冲突的根源。"""
 
-    def test_mock_playback_worker_no_pyaudio(self):
+    def test_mock_playback_worker_no_pyaudio(self, monkeypatch):
+        from unittest.mock import Mock
         from src.tts_client import TTSClient
         tts = TTSClient()
+        synthesize = Mock(wraps=tts.synthesize)
+        monkeypatch.setattr(tts, "synthesize", synthesize)
         tts.start_playback_worker()
         tts.enqueue_sentence("测试播放。")
 
         time.sleep(0.5)
         tts.wait_for_queue(timeout=2.0)
+        synthesize.assert_called_once_with("测试播放。")
+        assert not tts.is_playing, "Playback did not finish before timeout"
+        assert tts._pyaudio_instance is None
         tts.stop_playback()
 
-        assert tts._pyaudio_instance is None
-        assert not tts.is_playing
-
-    def test_mock_playback_multiple_sentences(self):
+    def test_mock_playback_multiple_sentences(self, monkeypatch):
+        from unittest.mock import Mock, call
         from src.tts_client import TTSClient
         tts = TTSClient()
+        synthesize = Mock(wraps=tts.synthesize)
+        monkeypatch.setattr(tts, "synthesize", synthesize)
         tts.start_playback_worker()
         tts.enqueue_sentence("第一句。")
         tts.enqueue_sentence("第二句。")
         tts.enqueue_sentence("第三句。")
 
         tts.wait_for_queue(timeout=5.0)
-        tts.stop_playback()
-
+        assert synthesize.call_args_list == [call("第一句。"), call("第二句。"), call("第三句。")]
+        assert not tts.is_playing, "Playback did not finish before timeout"
         assert tts._pyaudio_instance is None
         assert tts._sentence_queue.empty()
+        tts.stop_playback()
 
     def test_mock_speak_does_not_crash(self):
         from src.tts_client import TTSClient
@@ -234,7 +229,9 @@ class TestSensorMessageHandling:
         from src.message_bus import MessageBus, IPCMessage, MessageType
         from src.tool_executor import ToolExecutor
 
-        bus = MessageBus()
+        from src.main import AmiyaSystem
+        app = AmiyaSystem()
+        bus = app.bus
         te = ToolExecutor()
 
         te.state_ctrl.start_focus(25)
@@ -247,13 +244,8 @@ class TestSensorMessageHandling:
         )
         bus.to_main.put(msg)
 
-        received = bus.receive(timeout=0.1)
-        assert received is not None
-        assert received.type == MessageType.PHONE_DETECTED
-
-        # 传感器进程检测到手机 → MessageBus → 主循环分发 → state_ctrl
-        result = te.state_ctrl.phone_inserted()
-        assert result["success"]
+        app._check_sensor_messages(te)
+        assert app._last_phone_state is True
         assert te.state_ctrl.state.name == "FOCUSING"
 
         te.state_ctrl.cancel_focus()
@@ -292,49 +284,41 @@ class TestSensorMessageHandling:
 # TestErrorRecovery — 错误恢复和降级模式（无需API）
 # ═══════════════════════════════════════════════════════════════
 
-class TestErrorRecovery:
-    """错误累积和降级模式机制测试。"""
+class TestSystemLifecycle:
+    """Exercise actual signal and sensor-thread shutdown behavior."""
 
-    def test_error_counter_increments(self):
+    def test_stop_signal_stops_main_loop(self):
+        import signal
         from src.main import AmiyaSystem
-
         app = AmiyaSystem()
-        assert app._consecutive_errors == 0
-        app._consecutive_errors += 1
-        assert app._consecutive_errors == 1
-        app._running = False
+        app._handle_signal(signal.SIGINT, None)
+        assert app._running is False
 
-    def test_max_errors_triggers_degraded(self):
-        max_errors = config.get("error_handling.max_consecutive_errors", 5)
-        cooldown = config.get("error_handling.error_cooldown_seconds", 5)
-        assert max_errors > 0
-        assert cooldown > 0
-
-    def test_degraded_mode_cooldown_config(self):
-        cooldown = config.get("error_handling.error_cooldown_seconds", 5)
-        config.set("error_handling.error_cooldown_seconds", 3)
-        assert config.get("error_handling.error_cooldown_seconds") == 3
-        config.set("error_handling.error_cooldown_seconds", 5)
+    def test_shutdown_stops_sensor_thread(self):
+        from src.main import AmiyaSystem
+        app = AmiyaSystem()
+        app._start_sensor_process()
+        try:
+            assert app.bus.receive(timeout=2) is not None
+        finally:
+            app.shutdown()
+        assert app.shutdown_event.is_set()
+        assert not app._sensor_thread.is_alive()
 
 
 # ═══════════════════════════════════════════════════════════════
 # TestConversationTimeout — 会话超时（无需API）
 # ═══════════════════════════════════════════════════════════════
 
-class TestConversationTimeout:
-    """会话超时和静音轮次限制测试。"""
+class TestConversationConfig:
+    """Configuration persistence is tested in the per-test temporary directory."""
 
-    def test_timeout_constant_is_configurable(self):
-        timeout = config.get("audio.conversation_timeout_seconds", 10)
-        assert timeout > 0
+    def test_timeout_configuration_is_saved(self, isolated_runtime):
+        import json
         config.set("audio.conversation_timeout_seconds", 5)
-        assert config.get("audio.conversation_timeout_seconds") == 5
-        config.set("audio.conversation_timeout_seconds", 10)
-
-    def test_silence_turns_limit_exists(self):
-        # SILENCE_TURNS_LIMIT 在 main.py 中硬编码为2，验证相关配置存在
-        max_errors = config.get("error_handling.max_consecutive_errors", 5)
-        assert max_errors == 5
+        saved = json.loads((isolated_runtime / "data/config.json").read_text(encoding="utf-8"))
+        assert saved["audio"]["conversation_timeout_seconds"] == 5
+        assert "api_keys" not in saved
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -420,86 +404,80 @@ class TestAudioMockHeadless:
 
 
 # ═══════════════════════════════════════════════════════════════
-# TestHeadlessVoiceLoop — 无头完整语音对话循环（需要API）
+# TestHeadlessVoiceLoop — 使用脚本化响应的离线主循环测试
 # ═══════════════════════════════════════════════════════════════
 
-@pytest.mark.api
 class TestHeadlessVoiceLoop:
-    """完整语音对话循环端到端测试（需要LLM API）。"""
+    """Run the real main loop with scripted LLM/ASR responses and a TTS recorder."""
 
-    @pytest.mark.timeout(60)
-    def test_wake_greet_single_turn_exit(self):
-        """唤醒 → 问候 → 单轮对话 → LLM返回[EXIT] → 结束。"""
-        from src.main import AmiyaSystem
+    @pytest.mark.parametrize("with_tool", [False, True])
+    def test_scripted_conversation_exits_and_saves(self, monkeypatch, isolated_runtime, with_tool):
+        import copy
+        import json
+        from src import main
 
-        headless_input.feed_sequence([
-            "",                                          # 唤醒
-            "好了阿米娅，没有其他问题了，再见。",           # 触发[EXIT]
-        ])
+        app = main.AmiyaSystem()
+        requests = []
+        spoken = []
+        transcripts = iter(["查询专注状态", "再见"] if with_tool else ["再见"])
+        turns = iter([
+            {"text": "", "tool_calls": [{"id": "call-1", "type": "function",
+                "function": {"name": "get_focus_status", "arguments": "{}"}}]},
+            "当前没有进行专注模式。", "[EXIT] 再见。",
+        ] if with_tool else ["[EXIT] 再见。"])
+        wake_count = 0
 
-        config.set("mock.audio", True)
-        app = AmiyaSystem()
-        app._running = True
+        def wake(*args, **kwargs):
+            nonlocal wake_count
+            wake_count += 1
+            if wake_count > 1:
+                app._running = False
+                return False
+            return True
 
-        thread = threading.Thread(target=app._run_voice_loop, daemon=True)
-        thread.start()
+        def stream(self, messages, on_text_chunk=None, **kwargs):
+            requests.append(copy.deepcopy(messages))
+            reply = next(turns)
+            if isinstance(reply, str) and on_text_chunk:
+                on_text_chunk(reply)
+            return reply
 
-        # 等待对话完成（唤醒+TTS+LLM+退出）
-        time.sleep(20)
+        class RecordingTTS:
+            is_playing = False
+            def set_shared_pa(self, pa):
+                assert pa is None
+            def speak(self, text):
+                spoken.append(text)
+                return True
+            def enqueue_sentence(self, text):
+                spoken.append(text)
+            def start_playback_worker(self):
+                pass
+            def stop_playback(self):
+                pass
+            def wait_for_queue(self):
+                pass
 
-        app._running = False
-        app.shutdown()
-        thread.join(timeout=5)
-
-        assert not thread.is_alive() or not app._running
-
-    @pytest.mark.timeout(90)
-    def test_focus_tool_call(self):
-        """唤醒 → 发起专注指令 → LLM调用set_focus_mode工具 → 结束。"""
-        from src.main import AmiyaSystem
-
-        headless_input.feed_sequence([
-            "",                                          # 唤醒
-            "阿米娅，帮我设置一个5分钟的专注。",           # 触发工具调用
-            "好的，专注结束，退出。",                      # 退出
-        ])
-
-        config.set("mock.audio", True)
-        app = AmiyaSystem()
-        app._running = True
-
-        thread = threading.Thread(target=app._run_voice_loop, daemon=True)
-        thread.start()
-
-        time.sleep(30)
-
-        app._running = False
-        app.shutdown()
-        thread.join(timeout=5)
-
-        assert not thread.is_alive() or not app._running
-
-
-# ═══════════════════════════════════════════════════════════════
-# TestSkipFilter — LLM [SKIP]过滤测试（需要API）
-# ═══════════════════════════════════════════════════════════════
-
-@pytest.mark.api
-class TestSkipFilter:
-    """LLM对非对话内容的[SKIP]过滤。"""
-
-    @pytest.mark.timeout(30)
-    def test_skip_filter_for_non_addressed_speech(self):
-        from src.llm_client import LLMClient
-
-        llm = LLMClient()
-        system = llm.build_system_prompt(nickname="博士")
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": "老王今天晚上吃什么？"},
-        ]
-        reply = llm.stream_chat(messages)
-        assert "[SKIP]" in reply or len(reply) < 30
+        monkeypatch.setattr(main, "TTSClient", RecordingTTS)
+        monkeypatch.setattr(main.WakeWordDetector, "listen_for_wake_word", wake)
+        monkeypatch.setattr(main.ASRClient, "recognize_once", lambda self, audio: next(transcripts))
+        monkeypatch.setattr(main.LLMClient, "stream_chat", stream)
+        app.run()
+        assert len(requests) == (3 if with_tool else 1)
+        if with_tool:
+            assert any(m.get("role") == "tool" and m["content"] == "当前没有进行专注模式。"
+                       for m in requests[1])
+            assert "当前没有进行专注模式。" in spoken
+        assert any("再见" in text for text in spoken)
+        saved = json.loads((isolated_runtime / "data/memory_today.json").read_text(encoding="utf-8"))
+        assert saved["session_count"] == 1
+        assert "再见" in saved["recent_sessions"][0]["summary"]
+        assert app.shutdown_event.is_set()
+        assert not app._sensor_thread.is_alive()
+        # The unchanged shutdown requests checker exit after its initial join.
+        # Wait for that request to take effect; do not change production ordering.
+        app._sensor_checker_thread.join(timeout=2)
+        assert not app._sensor_checker_thread.is_alive()
 
 
 # ═══════════════════════════════════════════════════════════════

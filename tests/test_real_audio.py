@@ -1,16 +1,15 @@
 """真实音频设备测试 - 录音+播放验证"""
 
 import sys
-import io
 import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+import pytest
 
 
-def test_real_audio():
+def run_real_audio_test():
     """测试真实麦克风录音和音箱播放"""
     import pyaudio
 
@@ -111,6 +110,11 @@ def test_real_audio():
     return True
 
 
+@pytest.mark.hardware
+def test_real_audio():
+    assert run_real_audio_test(), "Real audio device test failed"
+
+
 if __name__ == "__main__":
-    success = test_real_audio()
+    success = run_real_audio_test()
     sys.exit(0 if success else 1)
